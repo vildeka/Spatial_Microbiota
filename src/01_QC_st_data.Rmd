@@ -1,0 +1,385 @@
+---
+title: "Quality Control Spatial data"
+date: "`r format(Sys.time(), '%d %m %Y')`"
+format:
+  html:
+    embed-resources: true
+    code-fold: show
+params:
+  fig.path: "./Figures/01/"
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r background-job, eval=FALSE, include=FALSE}
+source("../bin/render_with_jobs.R")
+
+# quarto
+# render_html_with_job(out_dir = lab_dir)
+# fs::file_move(path = file, new_path = paste0(lab_dir, file))
+
+# currently using quarto for github and kniter for html du to source code option 
+render_git_with_job(fig_path = "./Figures/01/")
+# Change the figure path from ./Figures/01/ to ../Figures/01/:
+system2(command = "sed", stdout = TRUE,
+        args = c("-i", "''","-e", 's/src=\\"\\./src=\\"\\.\\./g',
+                 paste0("./md_files/", basename("./01_QC_st_data.md"))))
+
+# kniter
+knit_html_with_job(out_dir = "../lab_book/01_QC_st_data/", fig_path = "./Figures/01/")
+```
+
+```{r setup, echo=FALSE, message=FALSE, warning=FALSE}
+knitr::opts_chunk$set(
+  fig.path    = params$fig.path,
+  dev         = c("png"),
+  dpi         = 300,
+  fig.align   = "center",
+  warning     = FALSE, 
+  message     = FALSE,
+  fig.process = function(filename){
+    new_filename <- stringr::str_remove(string = filename, 
+                                        pattern = "-1")
+    fs::file_move(path = filename, new_path = new_filename)
+    ifelse(fs::file_exists(new_filename), new_filename, filename)
+})
+
+# setwd("~/work/Brolidens_work/Projects/Spatial_Microbiota/src")
+```
+
+### Load packages
+```{r Load-Library, message=FALSE, warning=FALSE}
+##################
+# LOAD LIBRARIES #
+##################
+library(tidyverse)
+library(tidyseurat)
+library(Seurat)
+library(SeuratObject)
+library(broom)
+library(RColorBrewer)
+library(cowplot)
+library(patchwork)
+
+source("../bin/spatial_visualization.R")
+
+```
+
+### Load ST data
+```{r Load-data}
+#########
+# PATHS #
+#########
+input_dir <- "../results/00_load_st_data/"
+result_dir <- "../results/01_QC_st_data/"
+if( isFALSE(dir.exists(result_dir)) ) { dir.create(result_dir,recursive = TRUE) }
+
+#############
+# LODA DATA #
+#############
+#metadata <- read_csv("../data/Clinincal_data_Spatial_DMPA.csv")
+DATA <- readRDS(paste0(input_dir,"seuratObj_merged.RDS"))
+sample_id <- c("P020", "P045", "P050", "P057",
+               "P008", "P031", "P080", "P044", "P026", "P105", 
+               "P001", "P004", "P014", "P018", "P087", "P108", "P118",
+               "P021", "P024", "P067", "P081", "P117" ) %>% set_names()
+
+#################
+# COLOUR PALLET #
+#################
+friendly_cols <- c("#4E79A7", "#F28E2B", "#E15759", "#76B7B2", "#59A14F", "#EDC948", "#9C755F", "#B07AA1", "#FF9DA7", "#E78AC3", "#7FC97F", "#BEAED4", "#BAB0AC", "#FDC086", "#FFFF99", "#386CB0", "#F0027F", "#BF5B17", "#666666", "#66C2A5", "#FC8D62", "#8DA0CB")
+# "#A6D854" "#FFD92F" "#E5C494" "#B3B3B3"
+```
+
+```{r Seurat-Version, echo=FALSE}
+Seurat_V4 <- TRUE
+
+if(Seurat_V4){ 
+  # V4
+  assay_count <- DATA@assays$RNA@counts}else{ 
+  # V5
+  assay_count <- DATA@assays$RNA@layers$counts
+  # set default layer to counts because data is empty and we want to operate on counts (V5):
+  LayerData(DATA, layer = "data") <- LayerData(DATA, layer = "counts")}
+```
+
+```{r 01a_Feature_and_counts}
+###########################################
+# QUALITY CONTROLL FEATURE & COUNTS PLOTS #
+###########################################
+p1 <- ggplot() +
+  geom_histogram(data = DATA@meta.data, aes(nFeature_RNA), fill = "red", alpha = 0.7, bins = 50) +
+  ggtitle("Unique genes per spot") 
+
+p2 <- ggplot() +
+  geom_histogram(data = DATA@meta.data, aes(nCount_RNA), fill = "red", alpha = 0.7, bins = 50) +
+  ggtitle("Total counts per spots")
+
+gene_attr <- data.frame(nUMI = Matrix::rowSums(assay_count), 
+                        nSpots = Matrix::rowSums(assay_count > 0))
+
+p3 <- ggplot() +
+  geom_histogram(data = gene_attr, aes(nUMI), fill = "red", alpha = 0.7, bins = 50) +
+  scale_x_log10() +
+  ggtitle("Total counts per gene (log10 scale)")
+
+p4 <- ggplot() +
+  geom_histogram(data = gene_attr, aes(nSpots), fill = "red", alpha = 0.7,  bins = 50) +
+  ggtitle("Total spots per gene")
+
+plot_grid(ncol = 1, 
+          p1 + p2 + p3 + p4)
+```
+
+### Add QC features to DATA
+```{r Add-feature-info, fig.height=15}
+################################
+# CALC. % MITO/RIBO/HEMO-GENES #
+################################
+DATA <- PercentageFeatureSet(DATA, "^MT-", col.name = "percent_mito")
+DATA <- PercentageFeatureSet(DATA, "^HB[^(P)]", col.name = "percent_hb")
+DATA <- PercentageFeatureSet(DATA, "^RP[SL]", col.name = "percent_ribo")
+
+```
+
+### Summary stats before filtering
+```{r summary-table-before}
+#################
+# SUMMARY STATS #
+#################
+feature <-  c("nCount_RNA", "nFeature_RNA","percent_mito","percent_hb", "percent_ribo")
+sapply(DATA@meta.data[feature], summary) %>% 
+  bind_rows(.id = "stat") %>% 
+  knitr::kable(digits = 1)
+```
+
+```{r include=FALSE, eval=FALSE, fig.height=12.5, fig.width=12.5}
+d <- DATA %>%
+filter(percent_mito > 15)
+
+d <- DATA %>%
+filter(nFeature_RNA < 200)
+
+d <- DATA %>%
+filter(nCount_RNA < 100)
+
+# dev.new(width=12.5, height=12.5, noRStudioGD = TRUE)
+# spots with low quality:
+d %>%
+  plot_st_meta.fun(.,  
+          assay="RNA",
+          save_space = T,
+          feat = "sp_annot",
+          zoom = "zoom",
+          ncol = 5,
+          annot_line = .1,
+          img_alpha = 0,
+          point_size = 0.8
+        )
+```
+
+### Plot feature data on the tissue sections
+```{r 01b_sp_mt_plot, fig.height=12.5, fig.width=12.5}
+# dev.new(width=12.5, height=12.5, noRStudioGD = TRUE)
+# percentage of mitochondria
+(plots_m <- DATA %>%
+  plot_spatial.fun(., 
+      sampleid = sample_id,
+      save_space = T,
+      geneid = "percent_mito",
+      zoom = "zoom",
+      ncol = 4,
+      img_alpha = 0,
+      point_size = .5)
+    )
+```
+
+```{r 01c_sp_feat_plot, fig.height=12.5, fig.width=12.5}
+# number of genes per spot
+(plots_f <- DATA %>%
+  plot_spatial.fun(., 
+      sampleid = sample_id,
+      geneid = "nFeature_RNA",
+      zoom = "zoom",
+      ncol = 4,
+      img_alpha = 0,
+      point_size = .5)
+    )
+```
+
+```{r 01d_sp_count_plot, fig.height=12.5, fig.width=12.5}
+# number of reads per spot
+(plots_c <- DATA %>%
+  plot_spatial.fun(., 
+      sampleid = sample_id,
+      geneid = "nCount_RNA",
+      zoom = "zoom",
+      ncol = 4,
+      img_alpha = 0,
+      point_size = .5)
+    )
+```
+
+## Filtering
+Select all spots with less than 15% mitochondrial reads, less than 10% hb-reads and at least 100 detected genes.<br/>
+Filter genes present in less than 2 spots and remove hemoglobin and MALAT1 genes.
+```{r filtering}
+##########################
+# FILTER GENES AND CELLS #
+##########################
+# filter genes present in less than 2 spots:
+filt_low_genes <- function(x, n_cell = 2) x[rowSums(x) >= n_cell]
+# remove specified genes:
+remove_genes <- function(x, gene_name) x[!(grepl(gene_name, rownames(x[["RNA"]]))), ]
+# identify transcripts within the 0.005 percentile:
+percentile <- function(x, nF) between(nF,quantile(nF,probs = c(0.005)), quantile(nF,probs = c(0.995)))
+
+
+DATA <- DATA %>%
+  # filter out spots with less than 100 genes and more than 15% mt and 10% hb:
+  mutate(filt = case_when(nFeature_RNA < 100 ~ 'filt',
+                          percent_mito > 20 ~ 'filt',
+                          percent_hb > 10 ~ 'filt',
+                              TRUE ~ "keep")) %>%
+  mutate(orig.ident = factor(.$orig.ident, levels = sample_id)) %>%
+  {. ->> temp } %>%
+  #filter(., percentile(., .$nFeature_RNA)) %>%
+  filter(filt == "keep") %>%
+  filt_low_genes(., n_cell = 2) %>%
+  remove_genes(., "MALAT1|^HB[^(P)]") %>% # "^MT-|MALAT1|^HB[^(P)]"
+  select(-filt)
+```
+
+### Summary stats after filtering
+Dimension of DATA before filtering, genes: `r dim(temp)[1]`, spots: `r dim(temp)[2]`<br/>
+Dimension of DATA after  filtering, genes: `r dim(DATA)[1]`, spots: `r dim(DATA)[2]`
+```{r summary-table-after}
+###########################
+# SUMMARY STATS ALL SPOTS #
+###########################
+feature <-  c("nCount_RNA", "nFeature_RNA","percent_mito","percent_hb", "percent_ribo")
+sapply(DATA@meta.data[feature], summary) %>% 
+  as_tibble(rownames = "stat") %>% 
+  knitr::kable(digits = 1)
+
+#########################
+# SUMMARY STATS GROUPS #
+#########################
+DATA@meta.data %>%
+  split(.$groups, drop = T) %>% 
+  map(., ~.x %>%
+        select(., any_of(feature[1:2])) %>%
+        map(~tidy(summary(.x))) %>%
+        bind_rows(.id = "stat")
+        #tibble(.x, .name_repair="unique")
+      ) %>%
+  bind_rows(., .id = "groups") %>%
+  arrange(stat) %>%
+  knitr::kable(digits = 1)
+  
+```
+
+### Plotting QC after filtering
+```{r 01e_QC_plot_filtered, fig.height=25, fig.width=12}
+# dev.new(width=6, height=5, noRStudioGD = TRUE)
+################################
+# VIOLIN PLOT BEFORE FILTERING #
+################################
+feature <-  c("nCount_RNA", "nFeature_RNA","percent_mito","percent_hb", "percent_ribo")
+p_ <-  map(feature, 
+           ~violin.fun(temp, feature=.x, fill="orig.ident", 
+                       col_pal=friendly_cols, txt_size=15, n=1.5))
+# plot_grid(plotlist=p_, ncol = 1)
+
+################################
+# VIOLIN PLOT AFTER FILTERING #
+################################
+p <-  map(feature, 
+          ~violin.fun(DATA, feature=.x, fill="orig.ident",
+                      col_pal=friendly_cols, txt_size=15, n=1.5)) #
+#plot_grid(plotlist=c(p_, p), nrow = 5, byrow = F)
+plot_grid(plotlist=c(p), ncol = 1, byrow = F)
+```
+
+### Filtered spots
+```{r filtered-spots}
+temp %>%
+  filter(filt == "filt") %>%
+  arrange(nFeature_RNA) %>%
+  as_tibble() %>%
+  knitr::kable(digits = 1)
+```
+
+### Plot filtered spots
+```{r 01f_filtered_spots, fig.height=12.5, fig.width=12.5}
+# dev.new(width=12.5, height=12.5, noRStudioGD = TRUE)
+(plots <- temp %>%
+  plot_spatial.fun(., 
+      sampleid = sample_id,
+      geneid = "filt",
+      zoom = "zoom",
+      ncol = 4,
+      img_alpha = 0,
+      point_size = 0.5)
+    )
+
+```
+
+### Plot top expressed genes
+```{r 01g_top_abundante_genes}
+#############################
+# GET TOP 20 ABUNDANT GENES #
+#############################
+top_genes <- assay_count %>%
+  Matrix::rowSums(.) %>%
+  sort(., decreasing = T) %>%
+  .[1:20]
+
+percent.fun <- function(df, sample_name, gene, count){
+  sample_name <- enquo(sample_name)
+  gene <- enquo(gene)
+  count <- enquo(count)
+
+  percent <- df %>%
+    select(!!sample_name, !!gene, !!count) %>%
+    group_by(!!sample_name) %>%
+    mutate(Percent = (!!count/sum(!!count)*100)) %>%
+    select(-!!count) %>%
+    ungroup() 
+  
+  return(percent$Percent)
+}
+col = (scales::hue_pal())(20)[20:1]
+
+##################
+# PLOT TOP GENES #
+##################
+(genes_plot <- DATA %>%
+   join_features(features = names(top_genes) ) %>%
+   mutate(.feature = factor(.feature, levels = rev(names(top_genes)))) %>%
+   mutate("% total count per spot" = percent.fun(., .cell, .feature, .abundance_RNA),
+          .after=.abundance_RNA) %>%
+   ggplot(aes(y=`% total count per spot`, x=.feature, fill=.feature)) +
+   stat_boxplot(geom = "errorbar", width = 0.2) +
+   geom_boxplot(outlier.alpha = 0.1, outlier.size = .5) +
+   scale_fill_manual(values = col) + my_theme +
+   theme(plot.title = element_text(hjust = 0.5),
+         axis.title.y = element_blank()) +
+   NoLegend() + coord_flip() )
+
+```
+
+## Save seurat object
+```{r save-SeuratObject}
+##################################
+# SAVE INTERMEDIATE SEURAT OJECT #
+##################################
+saveRDS(DATA, paste0(result_dir,"seuratObj_filtered.RDS"))
+# saveRDS(DATA, paste0(result_dir,"seuratObjV5_filtered.RDS"))
+# DATA <- readRDS(paste0(result_dir,"seuratObj_filtered.RDS"))
+```
+
+### Session info
+```{r}
+sessionInfo()
+```
