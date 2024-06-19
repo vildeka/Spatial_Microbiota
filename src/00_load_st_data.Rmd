@@ -1,0 +1,655 @@
+---
+title: "Load Spatial data"
+date: "`r format(Sys.time(), '%d %m %Y')`"
+format:
+  html:
+    embed-resources: true
+    code-fold: show
+params:
+  fig.path: "./Figures/00/"
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r background-job, eval=FALSE, include=FALSE}
+source("../bin/render_with_jobs.R")
+
+# quarto
+# render_html_with_job(out_dir = lab_dir)
+# fs::file_move(path = file, new_path = paste0(lab_dir, file))
+
+# currently using quarto for github and kniter for html due to source code option 
+render_git_with_job(fig_path = "./Figures/00/")
+# Changes the figure path from ./Figures/ to ../Figures/:
+system2(command = "sed", stdout = TRUE,
+        args = c("-i", "''","-e", 's/src=\\"\\./src=\\"\\.\\./g',
+                 paste0("./md_files/", basename("./00_load_st_data.md"))))
+
+# kniter
+knit_html_with_job(out_dir = "../lab_book/00_load_st_data/", fig_path = "./Figures/00/")
+```
+
+```{r setup, echo=FALSE, message=FALSE, warning=FALSE}
+knitr::opts_chunk$set(
+  fig.width   = 6.6929133858,
+  fig.path    = params$fig.path,#"../Figures/",
+  fig.align   = "center",
+  message     = FALSE,
+  warning     = FALSE,
+  dev         = c("png"),
+  dpi         = 300,
+  fig.process = function(filename){
+    new_filename <- stringr::str_remove(string = filename,
+                                        pattern = "-1")
+    fs::file_move(path = filename, new_path = new_filename)
+    ifelse(fs::file_exists(new_filename), new_filename, filename)
+  })
+
+select <- dplyr::select
+# setwd('~/work/Brolidens_work/Projects/Spatial_Microbiota/src')
+```
+
+### Load libraries
+```{r Load-libraries, message=FALSE, warning=FALSE}
+##################
+# LOAD LIBRARIES #
+##################
+library(tidyverse)
+library(tidyseurat)
+library(Seurat)
+library(hdf5r)
+
+library(xml2) # loads the image 
+library(sp)
+library(terra)
+library(cowplot)
+
+source("../bin/help_functions.R")
+source("../bin/spatial_visualization.R")
+
+#################
+# COLOR PALETTS #
+#################
+pal <- rep(c(RColorBrewer::brewer.pal(9,"Set1"),
+         RColorBrewer::brewer.pal(9,"Pastel1"),
+         RColorBrewer::brewer.pal(8,"Accent"),
+         RColorBrewer::brewer.pal(8,"Set2"),
+         RColorBrewer::brewer.pal(8,"Pastel2") ,
+         scales::hue_pal()(8)),99)
+
+```
+
+### Load Visium data
+```{r Load-data}
+#########
+# PATHS #
+#########
+input_dir <- "../data/spatial_data"
+result_dir <- "../results/00_load_st_data/"
+if( isFALSE(dir.exists(result_dir)) ) { dir.create(result_dir,recursive = TRUE) }
+
+#############
+# LODA DATA #
+#############
+meta <- read_csv("../data/ST-samples_metadata.csv")
+h5_files <- list.dirs(path = input_dir,
+                      full.names = T, recursive = T) %>%
+            grep("P\\d\\d\\d$", ., value = TRUE) %>%
+            set_names(., str_extract(., "P\\d\\d\\d$"))
+sample_id <- c("P020", "P045", "P050", "P057",
+               "P008", "P031", "P080", "P044", "P026", "P105", 
+               "P001", "P004", "P014", "P018", "P087", "P108", "P118",
+               "P021", "P024", "P067", "P081", "P117" ) %>% set_names()
+
+h5_files <- h5_files[names(h5_files) %in% sample_id]
+# the new version of seurat v5 does not allow to read in any other than low res img
+# to circumvent this rename the hires to low res and move the lowres file
+image <- map(h5_files, 
+             ~Read10X_Image(
+               filter.matrix = T,
+               image.dir = paste0(.x, "/spatial"),
+               image.name = "tissue_hires_image.png"))
+
+# Read in h5 files and create Seurat Object
+seuratObj_list <- pmap(list(h5_files, image, names(h5_files)),
+                       ~Load10X_Spatial(
+                         filename = "filtered_feature_bc_matrix.h5",
+                         filter.matrix = T,
+                         assay = "RNA",
+                         data.dir = ..1,
+                         image =  ..2,
+                         slice = ..3)) 
+rm(image)
+# sample_id <- names(h5_files) %>% set_names()
+```
+
+### Tidy up the seurat object
+```{r Clean-SeuratObj}
+####################################
+# RENAME SAMPLES, SPOTS AND IMAGES #
+####################################
+seuratObj_list <- seuratObj_list %>%
+  imap(., ~AddMetaData(object = .x, 
+                       metadata = rep(.y, length(Idents(.x))), 
+                       col.name = "orig.ident")) %>%
+  map(.,  ~SetIdent(., value = .@meta.data$orig.ident)) %>%
+  imap(., ~RenameCells(.x, 
+                      new.names = paste0(.y,"_", gsub("-.*","",colnames(.x[["RNA"]])))) ) %>%
+  imap(., ~ {.x@images <- set_names(.@images,.y); .x})
+
+##################
+# MERGE SAMPLES #
+#################
+# Merge datasets into one single seurat object
+
+DATA  <- merge(seuratObj_list[[1]], y = seuratObj_list[2:length(seuratObj_list)])
+# DATA <- JoinLayers(DATA) # Seurat version 5.0
+rm(seuratObj_list)
+```
+
+```{r Manual-annot}
+##########################
+# ADD MANUAL ANNOTATION #
+#########################
+### Load morphology annotation
+a2 <- map(sample_id, ~xml2::as_list( read_xml( paste0( input_dir,"/",.x,"/",.x,".svg")) ) )
+dd <- map(a2, ~as.numeric( strsplit( attributes(.x$svg)$viewBox , " ")[[1]] ))
+dd2 <- map(sample_id, ~dim(DATA@images[[.x]]@image))
+
+# sample_id <- "P097"
+# a2 <- a2[["P097"]]
+# dd <- dd[["P097"]]
+# dd2 <- dd2[["P097"]]
+
+# add image coordinates to the seurat object
+get_img_coord <- function(DATA, sample_id){
+  img_coord <- DATA@images[[sample_id]]@coordinates
+  DATA@images[[sample_id]]@coordinates <<- img_coord 
+}
+
+# add manual spatial annotation
+get_sp_annot <- function(a2, dd, dd2, sample_id){
+  scale.factor <- DATA@images[[sample_id]]@scale.factors$hires
+  img_coord <- DATA@images[[sample_id]]@coordinates
+  
+  id <- a2$svg %>%
+    map_chr(., ~attr(.x,"id")) %>% 
+    set_names(seq_along(.), .)
+  
+  annot_coord <- id %>%
+    map(., ~get_shape(a2$svg[[.x]]) ) %>%
+    map(., ~as_tibble(.x, .name_repair="unique"))  %>%
+    # convert the view box from the svg to the pixel dimensions of the raster img:
+    map(., ~mutate(.x, x = .x[[1]]*dd2[2]/dd[3],
+                       y = .x[[2]]*dd2[1]/dd[4] )) %>%
+    map(., ~rowid_to_column(., var = "path_idx")) %>%
+    {. ->>  temp} %>%
+    bind_rows(., .id="name") %>%
+    group_by(., name) %>%
+    mutate(elem_idx = cur_group_id()) %>% # group_indices(., name)
+    ungroup() %>%
+    mutate(colour = ifelse(grepl("fov|zoom|full_image",.$name),
+                           "transparent", "black")) %>%
+    list(.) %>%
+    set_names(., sample_id[1])
+  
+  DATA@tools <<- append(DATA@tools, annot_coord )
+  
+  img_coord <- temp %>%
+    list_modify("fov" = NULL, "full_image" = NULL, "zoom" = NULL) %>%
+    compact() %>%
+    imap(., ~mutate(img_coord, !!.y := sp::point.in.polygon(
+         point.x = img_coord$imagecol*scale.factor,
+         point.y = img_coord$imagerow*scale.factor,
+         pol.x = .x$x,
+         pol.y = .x$y )) ) %>%
+    map(., ~select(.x, last_col())) %>%
+    cbind(img_coord, .)
+  
+  DATA@images[[sample_id]]@coordinates <<- img_coord 
+  
+  sp_annot <- img_coord %>%
+    rownames_to_column(., var = "barcodes") %>%
+    mutate(across(7:ncol(.), ~ifelse(. == 0, NA, .)) ) %>%
+    pivot_longer(., cols = 7:ncol(.), names_to ="sp_annot", values_to = "count") %>%
+    filter(!(is.na(count))) %>%
+    group_by(barcodes) %>%
+    mutate(dupp = row_number()) %>%
+    ungroup() %>%
+    filter(., .$dupp == 1) %>%
+    select(., barcodes, sp_annot)
+  
+  #DATA <<- left_join( DATA, sp_annot, by=c(".cell"="barcodes", "sp_annot"="sp_annot")) 
+  
+  return(list(coord=annot_coord, annot=sp_annot))
+}
+annot <- list(a2, dd, dd2, names(a2)) %>%
+  pmap(., ~get_sp_annot(..1, ..2, ..3, ..4)) %>%
+  set_names(., names(a2))
+
+sp <- map(annot, 2) %>% bind_rows()
+
+DATA <-  DATA %>%
+  left_join(., sp, by=c(".cell"="barcodes")) %>%
+  mutate(sp_annot2 = .$sp_annot) %>%
+  mutate(sp_annot = case_match(
+    sp_annot2,
+    c("epi_1","epi_2", "epi_3", "epi_4") ~ "epi",
+    c("SubMuc_2", "SubMuc_3", "SubMuc_4") ~ "SubMuc",
+    c("fov_centered","fov") ~ NA, .default = sp_annot2), .before = "orig.ident" ) %>%
+  # mutate(sp_annot = ifelse(grepl("epi", .$sp_annot2), "epi", 
+  #                          ifelse(grepl("SubMuc", .$sp_annot2), "SubMuc", .$sp_annot2 ))) %>%
+  select(-sp_annot2)
+
+DATA
+```
+
+```{r crop-img}
+# adds a matrix with zeros outside the polygon boundary to DATA@misc$alpha
+# when plotting it is added as a 4th dim to the image matrix  
+# to specify alpha for each pixel in the image
+mask_background.fun <- function(df, im, sampleid, manual = TRUE){
+  # get polygon coordinates for individual polygons:
+  df <- df %>%
+    select( any_of(c("name","path_idx", "x", "y"))) %>% 
+    filter(grepl("epi|SubMuc", .$name)) %>% 
+    split(~name) 
+  
+  # Function to create SpatialPolygons from a dataframe
+  createSpatialPolygons <- function(df) {
+    # Convert dataframe to SpatialPointsDataFrame
+    #coordinates(df) <- c("y","x")
+    coordinates(df) <- c("x", "y")
+    
+    # Order the points based on 'path_idx'
+    df <- df[order(df$path_idx, decreasing = F), ]
+    #df <- df %>% arrange(desc(path_idx))
+    
+    # Create a SpatialPolygons object
+    poly <- SpatialPolygons(list(Polygons(list(Polygon(df)), ID = df$name[1])))
+    
+    return(poly)
+  }
+  
+  # Apply the function to each element of the list
+  polygons_list <- map(df, ~createSpatialPolygons(.x))
+  
+  # Combine the SpatialPolygons into a single object
+  combined_polygon <- do.call("rbind", polygons_list)
+  
+  # Convert it to a polygon (SpatVector)
+  polygon <- vect(combined_polygon)
+  
+  # get image matrix and convert to rgb before rasterizing
+  img <- matrix(
+      rgb(im[,,1],im[,,2],im[,,3], im[4,,]* 1), nrow=dim(im)[1])
+  raster <- rast(img)
+  
+  rasterized <- rasterize(polygon, raster)
+  rasterized <- flip(rasterized, direction="vertical")
+  
+  # Plot the polygon
+  # plot(polygon)
+
+  # Crop the raster using the polygon
+  cropped_raster <- mask(raster, rasterized, updatevalue=0)
+  
+  # Plot the cropped raster to verify
+  # plot(cropped_raster)
+
+  cropped_raster <- ifel(cropped_raster > 0, 1, cropped_raster)
+  
+  image_array <- as.array(cropped_raster)[,,1] # keep first dim only 
+  #NA_idx <- which(is.na(image_array[,,1]))
+  
+  # minpulate image matrix
+  #im <- replace(im, list = which(image_array != 0)), values = 1)
+  DATA@misc$alpha <<- append(DATA@misc$alpha, set_names(list(image_array), sampleid) )
+}
+
+walk(sample_id, ~mask_background.fun(DATA@tools[[.x]], DATA@images[[.x]]@image, .x) )
+```
+
+```{r eval=FALSE}
+df_ <- DATA@images[["P031"]]@coordinates %>%
+    mutate(scale_fact = DATA@images[["P031"]]@scale.factors$hires) %>%
+    mutate(imagecol = .$imagecol * .$scale_fact) %>%
+    mutate(imagerow = .$imagerow * .$scale_fact) %>%
+  rename( y = "imagerow", x = "imagecol") %>%
+  rename(flightlineID="tissue") %>% select(-row, -col, -scale_fact)
+
+ggplot(df_, aes(x=x, y=y)) +
+  #geom_point(size=3) + 
+  theme_classic() +
+    ggstar::geom_star(
+      starshape = "hexagon",
+      fill = "red",
+      size = 2,
+      #stroke = 0,
+      alpha = 1
+    )
+  geom_encircle()
+  stat_contour_fill(aes(z = tissue))
+  geom_density_2d(data = df, aes(x=x, y=y), contour_var = "count", contour = T)
+  
+m = list(x=df$x, y=df$y, z=matrix(1:12, 4, 3))
+  
+  resx <- ( m$x[length(m$x)] - m$x[1] ) / (length(m$x)-1)
+  resy <- ( m$y[length(m$y)] - m$y[1] ) / (length(m$y)-1)
+    xmn <- min(m$x) - 0.5 * resx
+    xmx <- max(m$x) + 0.5 * resx
+    ymn <- min(m$y) - 0.5 * resy
+    ymx <- max(m$y) + 0.5 * resy
+  z <- t(m$z)
+  z <- z[nrow(z):1, ]
+
+las_df <- df_
+  
+las_df1 <- las_df[which(las_df$flightlineID == 1), ]
+#las_df2 <- las_df[which(las_df$flightlineID == 2L), ]
+las_vect1 <- vect(las_df1, geom = c('x', 'y'), crs = 'EPSG:32755')
+#las_vect2 <- vect(las_df2, geom = c('X', 'Y'), crs = 'EPSG:32755')
+las_rast <- rast(xmin=0, nrow = length(unique(las_df$x)), ncol = length(unique(las_df$y)), crs='EPSG:32755')
+set.ext(las_rast, c(min(las_df$x), max(las_df$x), min(las_df$y), max(las_df$y)))
+pts1_rast <- rasterize(las_vect1, las_rast, fun = length)
+pts2_rast <- rasterize(las_vect2, las_rast, fun = length)
+pts1_pts2_rast <- c(pts1_rast, pts2_rast)
+names(pts1_pts2_rast) <- c('lyr.1', 'lyr.2') # have to attend to this as both lyr.1 after `c(`
+plot(pts1_pts2_rast$lyr.1, col = 'red')
+
+plot(pts1_rast)
+bo <- boundaries(pts1_rast, inner=T, classes=T, directions=8, falseval=0,)
+bo <- patches(bo, directions=8, zeroAsNA=T, allowGaps=TRUE)
+plot(bo)
+
+img <- rast("/Users/vilkal/work/Brolidens_work/Projects/Spatial_Microbiota/data/Spatial_data/P008/spatial/detected_tissue_image.jpg")
+plot(img)
+bo <- plotRGB(img, 3, 1, 1)
+bo <- rast(bo)
+bo <- boundaries(bo, inner=T, classes=T, directions=8, falseval=0,)
+plot(bo)
+
+contour(pts1_rast, filled=TRUE, nlevels=1)
+raster <- contour(img, filled=TRUE, nlevels=1)
+raster <- ifel(raster > 200, NA, raster)
+plot(raster)
+
+r <- contour(img, filled=TRUE, nlevels=3)
+contour(img, add=TRUE)
+
+plot(img)
+lines(v)
+v <- as.contour(img) %>% st_as_sf()
+plot(v)
+r <- rast(v)
+
+a <- aggregate(v)
+
+a <- as.polygons(v)
+bo <- boundaries(a, inner=F, classes=T)
+
+plot(img)
+plot(r)
+lines(v)
+
+template <- disagg(rast(raster), 10)
+rr <- resample(raster, template)
+rr <- floor(rr/100) * 100
+v <- as.polygons(rr)
+plot(v, 1, col=terrain.colors(7))
+
+cropped_raster <- mask(img, a, updatevalue=0)
+```
+
+```{r crop-by-boundary, eval=FALSE}
+https://stackoverflow.com/questions/74153263/calculate-distance-of-points-to-polygon-boundary-using-terra-package-in-r
+# can identify the boundary of the tissue and use it to crop
+# it gives a more pixelated border than when using a hand drawn polygon as in the function
+# above "mask_background.fun()"
+find_boundary.fun <- function(im){
+  img <- matrix(
+      rgb(im[,,1],im[,,2],im[,,3], im[4,,]* 1), nrow=dim(im)[1])
+  img <- rast(img)
+  #plot(img)
+  
+  i <- im[,,1]+im[,,2]+im[,,3]
+  #i <- replace(im[,,1], list = which(im[,,1] > .7), values = 0)
+  
+  #raster <- rast(im[,,1])
+  raster <- rast(i)
+  # plot(raster)
+  raster <- ifel(raster > 2.9, NA, raster)
+  contour(raster, filled=TRUE, nlevels=5)
+  r <- sieve(raster, directions=8, threshold=500)
+  # plot(r)
+  
+  rc2 <- classify(r, matrix(c(0, NA,
+                              2, 1,
+                              3, 1), ncol=2, byrow=TRUE), 
+                  include.lowest=TRUE, brackets=F)
+  plot(rc2)
+  
+  # Extract only the boundary
+  bo <- boundaries(rc2, inner=F, classes=T)
+  # plot(bo)
+  
+  # Convert SpatRaster to SpatialPolygonsDataFrame
+  boundary_polygon <- as.polygons(bo) 
+  # plot(boundary_polygon)
+  
+  # Crop the raster using the polygon
+  cropped_raster <- mask(img, boundary_polygon, updatevalue=0)
+  plot(cropped_raster)
+  
+  return(boundary_polygon)
+}
+
+crop_with_poly.fun <-(im, polygon) {
+  # get image matrix and convert to rgb before rasterizing
+  img <- matrix(
+      rgb(im[,,1],im[,,2],im[,,3], im[4,,]* 1), nrow=dim(im)[1])
+  raster <- rast(img)
+  
+  rasterized <- rasterize(polygon, raster)
+  rasterized <- flip(rasterized, direction="vertical")
+  
+  # Plot the polygon
+  # plot(polygon)
+
+  # Crop the raster using the polygon
+  cropped_raster <- mask(raster, rasterized, updatevalue=0)
+  
+  # Plot the cropped raster to verify
+  # plot(cropped_raster)
+
+  cropped_raster <- ifel(cropped_raster > 0, 1, cropped_raster)
+  
+  image_array <- as.array(cropped_raster)[,,1] # keep first dim only 
+  #NA_idx <- which(is.na(image_array[,,1]))
+  
+  # minpulate image matrix
+  #im <- replace(im, list = which(image_array != 0)), values = 1)
+  DATA@misc$alpha <<- append(DATA@misc$alpha, set_names(list(image_array), sampleid) )
+}
+
+#boundary_polygon <- find_boundary.fun(DATA@images[["P057"]]@image)
+boundary_polygon <- map(sample_id, ~find_boundary.fun(DATA@images[[.x]]@image))
+walk(sample_id, ~crop_with_poly.fun(DATA@images[[.x]]@image, .x) )
+
+im <- DATA@images[["P081"]]@image
+
+```
+
+### Add meta data
+```{r add-groups}
+meta <- meta %>%
+  select(orig.ident="ID", groups=Luminal_gr_v3, Tissue_gr_v3) %>%
+  filter(orig.ident %in% sample_id)
+
+DATA <-  DATA %>%
+  left_join(., meta, by="orig.ident") %>%
+  select(groups, Tissue_gr_v3, sp_annot, everything())
+  
+```
+
+```{r 00a_plot_img, fig.height=12.5, fig.width=12.5}
+# dev.new(height=12.5, width=12.5, noRStudioGD = TRUE)
+DATA %>%
+  filter(!(is.na(.$sp_annot))) %>%
+  plot_spatial.fun(., 
+        sampleid = sample_id,
+        sp_annot = F,
+        lab = T,
+        save_space = F,
+        alpha = 0, # hides the spots
+        geneid = "nFeature_RNA",
+        zoom = NULL,
+        ncol = 5,
+        img_alpha = 1) + theme(legend.position = "none") # theme_nothing() #
+
+```
+
+```{r test, fig.height=14, fig.width=6, eval=FALSE}
+# dev.new(height=4.5, width=5, noRStudioGD = TRUE)
+# dev.new(height=2*5, width=2*4, noRStudioGD = TRUE)
+(p <- plot_spatial.fun(DATA, 
+      sampleid = sample_id,
+      sp_annot = T, 
+      lab = T,
+      save_space = T,
+      alpha = 1,
+      geneid = "nFeature_RNA",
+      zoom = "zoom",
+      ncol = 4,
+      annot_line = .2,
+      point_size = .3,
+      img_alpha = 0) +  theme(legend.position = "none")) 
+
+ggsave("./fig_1_.pdf", p)
+library(directlabels)
+# dev.new(height=2*5, width=2*4, noRStudioGD = TRUE)
+p <- DATA %>%
+  plot_st_meta.fun(.,  
+          assay="RNA",
+          feat = "sp_annot",
+          zoom = "full_image",
+          ncol = 5,
+          annot_line = .1,
+          annot_col = "black",
+          img_alpha = 0,
+          point_size = 0.7
+        )
+```
+
+NB! The zoom setting is now cutting off som of the largest samples (P020 and P057)
+When plotting these samples use the fov_centered
+
+### Cluster resolutions on tissue
+```{r 00_plot_annot_on_tissue, dev = c("png", "pdf")}
+# dev.new(width=6.6929133858, height=14, noRStudioGD = TRUE)
+plots <- DATA %>%
+  mutate(id = orig.ident, gr = groups) %>%
+  nest(., data = -c("gr", "id")) %>%
+  arrange(gr) %>%
+  mutate( "sp_annot" = pmap(., 
+    ~plot_spatial.fun(..3, sampleid=..1, geneid="sp_annot", img_alpha = .5, colors = c("#FBB4AE", "#B3CDE3", "red"),
+                      point_size = 0.6, annot_line = .1, zoom="fov_centered", save_space = F) + theme(legend.position="none"))) %>%
+  mutate( "nFeature_RNA" = pmap(., 
+    ~plot_spatial.fun(..3, sampleid=..1, geneid="nFeature_RNA",point_size = 0.6, 
+                      annot_line = .1, zoom="fov_centered", save_space = F) + 
+      theme(legend.position="none")))
+
+ncols <- table(plots$gr)
+combined <- split(plots, ~gr) %>%
+  map(., ~plot_grid( plotlist = c(.x$sp_annot, .x$nFeature_RNA), nrow = 2, byrow = T ))
+#ggsave("./fig_L1&L3.pdf", combined, width = 28, height = 5)
+#ggsave("./fig_.pdf", combined, width = 5, height = 5)
+```
+
+```{r 00b_L1, fig.height=15, fig.height=5, fig.width=2.5*ncols["L1"], dev = c("png", "pdf")}
+#| echo: false
+# dev.new(width=2.5*ncols["L1"], height=5, noRStudioGD = TRUE)
+combined[[1]]
+```
+
+```{r 00c_L2, fig.height=15, fig.height=5, fig.width=2.5*ncols["L2"], dev = c("png", "pdf")}
+#| echo: false
+# dev.new(width=2.5*ncols["L2"], height=5, noRStudioGD = TRUE)
+combined[[2]]
+```
+
+```{r 00d_L3, fig.height=15, fig.height=5, fig.width=2.5*ncols["L3"], dev = c("png", "pdf")}
+#| echo: false
+# dev.new(width=2.5*ncols["L3"], height=5, noRStudioGD = TRUE)
+combined[[3]]
+```
+
+```{r 00e_L4, fig.height=15, fig.height=5, fig.width=2.5*ncols["L4"], dev = c("png", "pdf")}
+#| echo: false
+# dev.new(width=2.5*ncols["L4"], height=5, noRStudioGD = TRUE)
+combined[[4]]
+```
+
+## Plot spots to be removed
+```{r 00f_plot_spots_to_remove, fig.height=1.7*6, fig.width=2*4}
+# dev.new(width=2.5*5, height=2.5*5, noRStudioGD = TRUE)
+
+DATA <-  DATA %>%
+  mutate(filt = case_when(is.na(.$sp_annot)  ~ 'filt',
+                          TRUE ~ 'keep')) 
+DATA %>%
+  plot_st_meta.fun(., 
+          lvls = sample_id,
+          lab = F,
+          assay="RNA",
+          feat = "filt",
+          zoom = "zoom",
+          ncol = 4,
+          annot_line = .1,
+          img_alpha = 0,
+          point_size = .5
+        )
+```
+
+### Remove NA spots
+```{r remove-NA-spots}
+dim(DATA)
+# Filter spots outside manual annotation
+DATA <- DATA[, !(is.na(DATA$sp_annot))]
+DATA$filt <- NULL
+
+dim(DATA)
+DATA
+```
+
+```{r 00g_final-sp_annot, fig.height=1.7*6, fig.width=2*4}
+# dev.new(width=12.5, height=12.5, noRStudioGD = TRUE)
+# dev.new(height=1.7*6, width=2*4, noRStudioGD = TRUE)
+DATA %>%
+  plot_st_meta.fun(.,  
+          assay="RNA",
+          lab=T,
+          feat = "sp_annot",
+          zoom = "zoom",
+          ncol = 4,
+          annot_line = .1,
+          annot_col = "black",
+          img_alpha = 0,
+          point_size = 0.5
+        )
+```
+
+## Save seurat object
+```{r save-SeuratObject}
+##################################
+# SAVE INTERMEDIATE SEURAT OJECT #
+##################################
+saveRDS(DATA, paste0(result_dir,"seuratObj_merged.RDS"))
+# DATA <- readRDS(paste0(result_dir,"seuratObj_merged.RDS")) # seuratObj_merged_seurat_v5.RDS
+```
+
+### Session info
+```{r}
+sessionInfo()
+```
+
