@@ -80,8 +80,8 @@ if( isFALSE(dir.exists(result_dir)) ) { dir.create(result_dir,recursive = TRUE) 
 #metadata <- read_csv("../data/Clinincal_data_Spatial_DMPA.csv")
 DATA <- readRDS(paste0(input_dir,"seuratObj_merged.RDS"))
 sample_id <- c("P020", "P045", "P050", "P057",
-               "P008", "P031", "P080", "P044", "P026", "P105", 
-               "P001", "P004", "P014", "P018", "P087", "P108", "P118",
+               "P008", "P031", "P044", "P080", "P026", "P105", 
+               "P001", "P004", "P014", "P018", "P087", "P118",
                "P021", "P024", "P067", "P081", "P117" ) %>% set_names()
 
 #################

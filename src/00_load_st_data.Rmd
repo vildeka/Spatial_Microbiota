@@ -57,6 +57,7 @@ select <- dplyr::select
 library(tidyverse)
 library(tidyseurat)
 library(Seurat)
+# remotes::install_version("Seurat", "4.4.0", repos = c("https://satijalab.r-universe.dev", getOption("repos")))
 library(hdf5r)
 
 library(xml2) # loads the image 
@@ -79,6 +80,10 @@ pal <- rep(c(RColorBrewer::brewer.pal(9,"Set1"),
 
 ```
 
+some of the original images has dimentions less than 2000px x 2000 px, this creates some limitations when plotting all the images together, because you have to use the smallest width and height as limits in order to not get a out of range error.
+
+to mitigate this I have extended the images so that all have dimensions of 2000px x 2000 px. When doing this it is important that you only add extra space to the right and bottom side of the image, otherwise the coordinates of the spots will be wrong, also you need to add a fill for the "new portion", for the crop_img function to work.
+
 ### Load Visium data
 ```{r Load-data}
 #########
@@ -98,7 +103,7 @@ h5_files <- list.dirs(path = input_dir,
             set_names(., str_extract(., "P\\d\\d\\d$"))
 sample_id <- c("P020", "P045", "P050", "P057",
                "P008", "P031", "P080", "P044", "P026", "P105", 
-               "P001", "P004", "P014", "P018", "P087", "P108", "P118",
+               "P001", "P004", "P014", "P018", "P087", "P118",
                "P021", "P024", "P067", "P081", "P117" ) %>% set_names()
 
 h5_files <- h5_files[names(h5_files) %in% sample_id]
