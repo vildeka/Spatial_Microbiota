@@ -65,8 +65,10 @@ plot_spatial.fun <- function(
     image_id = "hires",
     alpha = 1,
     ncol = 2,
+    max_val = NULL,
     save_space = T,
     spectral = TRUE,
+    annot_col = "#808080",
     annot_line = .2,
     colors = NULL, # lightgray
     point_size = .8,
@@ -96,6 +98,17 @@ plot_spatial.fun <- function(
     colour_pallet <- scale_color_gradientn(geneid, colours = cont_colors,
                                            na.value = "#FFFFFF",
                                            guide = guide_colourbar(barwidth = .5, barheight = 5 ))
+    if(is.numeric(max_val)){
+      colour_pallet <- scale_color_gradientn(colours = cont_colors,
+                                             #values = seq(from=0, to=max_val, along.with=cont_colors),
+                                             #breaks = round(seq(from=0, to=max_val, length.out=4)),
+                                             oob = scales::squish,
+                                             limits = c(min(spe[[geneid]]),max_val),
+                                             na.value = "grey90",
+                                             guide = guide_colourbar(barwidth = .5, barheight = 5 ))
+      
+      }
+    
     guides <- NULL 
   }else{
     if (is.null(colors)){
@@ -186,7 +199,7 @@ plot_spatial.fun <- function(
     spatial_annotation <- geom_path(
       data=tools, 
       show.legend = FALSE, linewidth = annot_line,
-      aes(x=x, y=y, group=interaction(elem_idx)), colour="#808080")
+      aes(x=x, y=y, group=interaction(elem_idx)), colour=annot_col)
   }
   else{spatial_annotation <- NULL}
   
@@ -210,8 +223,9 @@ plot_spatial.fun <- function(
     #                                x=imagecol,y=imagerow), data = df) +
     
     spatial_annotation + 
-    colour_pallet +
-    coord_fixed(ratio = aspect, expand=FALSE) +
+    colour_pallet + 
+    #scale_alpha_continuous(range=c(0.1-1.0)) +
+    coord_fixed(ratio = aspect, expand=FALSE, clip = "off") +
     
     lims +
     txt +
@@ -332,12 +346,45 @@ violin.fun <- function(
     fill="sample_name", 
     col_pal=NULL, 
     txt_size=7,
+    dot_size=.1,
     n=1){
   if(is.null(col_pal)){col_pal <- c("#4E79A7","#F28E2B","#E15759","#76B7B2","#59A14F","#EDC948","#B07AA1","#FF9DA7","#9C755F","#BAB0AC") }
   m <- max(obj[[feature]])/n # try e.g 2
   obj %>%
     ggplot(aes(.data[[facet]], .data[[feature]], fill=.data[[fill]])) +
-    geom_violin() + ggtitle(feature) +
+    geom_violin(linewidth = .2) + ggtitle(feature) +
+    geom_jitter(width = 0.3, alpha = 0.2, size=dot_size, col="black", stroke=0, shape=20) +
+    scale_fill_manual(values = col_pal) +
+    theme_minimal(base_size = 6) + NoLegend() + ylim(c(0, m)) +
+    theme(text = element_text(size = txt_size),
+          axis.text.x = element_text(angle = 30, hjust=1),
+          plot.title = element_text(hjust = 0.5),
+          axis.line = element_line(),
+          axis.title.y = element_blank(),
+          axis.title.x = element_blank()) 
+}
+
+# https://stackoverflow.com/questions/35717353/split-violin-plot-with-ggplot2
+violin.genes.fun <- function(
+    obj, 
+    feature, # one or more genes 
+    facet="feature", 
+    ncol = 1, 
+    group.by = "layers",
+    col_pal=NULL, 
+    txt_size=7,
+    n=1){
+  if(is.null(col_pal)){col_pal <- c("#4E79A7","#F28E2B","#E15759","#76B7B2","#59A14F","#EDC948","#B07AA1","#FF9DA7","#9C755F","#BAB0AC") }
+  
+  obj <- obj %>%
+    select(any_of(c(feature, facet, group.by))) %>%
+    pivot_longer(cols = any_of(feature), names_to = "feature", values_to = "val")
+  
+  m <- max(na.omit(obj[["val"]]))/n # try e.g 2
+  obj %>%
+    ggplot(aes(x=.data[[group.by]], y=.data[["val"]], fill=.data[[group.by]])) +
+    geom_violin() + {if(length(feature == 1)) ggtitle(feature)} +
+    geom_boxplot(fill = "transparent", notch = T) +
     geom_jitter(width = 0.3, alpha = 0.2, size=.1) +
     scale_fill_manual(values = col_pal) +
     my_theme + NoLegend() + ylim(c(0, m)) +
@@ -345,7 +392,8 @@ violin.fun <- function(
           axis.text.x = element_text(angle = 30, hjust=1),
           plot.title = element_text(hjust = 0.5),
           axis.title.y = element_blank(),
-          axis.title.x = element_blank()) 
+          axis.title.x = element_blank()) +
+    facet_wrap(~.data[[facet]], ncol = ncol, strip.position = c("right", "bottom", "left", "top"))
 }
 
 ##############################
@@ -368,8 +416,8 @@ plot_st_meta.fun <- function(
     save_space = TRUE,
     orig.ident = "orig.ident",
     lvls = c("P020", "P045", "P050", "P057",
-             "P008", "P031", "P080", "P044", "P026", "P105", 
-             "P001", "P004", "P014", "P018", "P087", "P108", "P118",
+             "P008", "P026", "P031", "P080", "P044", "P105", 
+             "P001", "P004", "P014", "P018", "P087", "P118",
              "P021", "P024", "P067", "P081", "P117" ),
     title = " ",
     image_id = "hires",
@@ -378,6 +426,7 @@ plot_st_meta.fun <- function(
     spectral = TRUE,
     colors = NULL,
     annot_col = "#808080",
+    txt_size = .5,
     annot_line = .3,
     point_size = 1.75,
     img_alpha = .5,
@@ -433,7 +482,7 @@ plot_st_meta.fun <- function(
     # txt <- list(geom_text(aes(label = sample_id, x=x, y=y), data = text_annot, inherit.aes = F, hjust = 0, size = 8/.pt), # sample ID
     #             geom_text(aes(label = gr, x=x, y=y+90), data = text_annot, inherit.aes = F, hjust = 0, size = 8/.pt) ) # condition
     txt <- list( geom_dl(data=df, aes(x=imagecol,y=imagerow,label=lab),  # label=orig.ident
-                         method=list(cex=.5,dl.trans(x=x+0.1, y=y+0.1),"top.qp") ))
+                         method=list(cex=txt_size,dl.trans(x=x+0.1, y=y+0.1),"top.qp") ))
   }else{txt <- NULL}
   
   # select viewframe:
@@ -547,8 +596,8 @@ plot_st_feat.fun <- function(
     geneid = "nFeature_RNA",
     orig.ident = "orig.ident",
     lvls = c("P020", "P045", "P050", "P057",
-             "P008", "P031", "P080", "P044", "P026", "P105", 
-             "P001", "P004", "P014", "P018", "P087", "P108", "P118",
+             "P008", "P026", "P031", "P080", "P044", "P105", 
+             "P001", "P004", "P014", "P018", "P087", "P118",
              "P021", "P024", "P067", "P081", "P117" ),
     title = " ",
     image_id = "hires",
@@ -690,6 +739,7 @@ plot_st_feat.fun <- function(
       coord_equal(expand=FALSE) +
       xlim(l$min_col,l$max_col) +
       ylim(l$max_row,l$min_row) +
+      #facet_wrap(~orig.ident, ncol = ncol, dir = if(ncol > 2){"h"}else{"v"})
       facet_wrap(~factor(orig.ident, levels = lvls), ncol = ncol, dir = if(ncol > 2){"h"}else{"v"})
     
     #Hexagon shape:
