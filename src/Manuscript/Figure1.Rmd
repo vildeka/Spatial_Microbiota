@@ -1,0 +1,648 @@
+ ---
+title: "Figure 1"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+format:
+  html:
+    embed-resources: true
+    code-fold: show
+params:
+  fig.path: "`r paste0(params$fig.path)`" #./Figures/
+editor_options: 
+  chunk_output_type: console
+---
+## Heatmap of significant genes per cluster
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  fig.width     = 6.6929133858,
+  fig.path      = params$fig.path,#"../Figures/",
+  fig.align     = "center",
+  message       = FALSE,
+  warning       = FALSE,
+  dev           = c("png"),
+  dpi           = 300,
+  fig.process = function(filename){
+    new_filename <- stringr::str_remove(string = filename,
+                                        pattern = "-1")
+    fs::file_move(path = filename, new_path = new_filename)
+    ifelse(fs::file_exists(new_filename), new_filename, filename)
+  }
+  )
+#  setwd("~/work/Brolidens_work/Projects/Spatial_Microbiota/src/Manuscript")
+```
+
+```{r background_job, eval=FALSE, include=FALSE}
+source("../../bin/render_with_jobs.R")
+
+# quarto
+# render_html_with_job(out_dir = lab_dir)
+# fs::file_move(path = file, new_path = paste0(lab_dir, file))
+
+# currently using quarto for github and kniter for html due to source code option 
+render_git_with_job(fig_path = "./Figures/07/")
+system2(command = "sed", stdout = TRUE,
+        args = c("-i", "''","-e", 's/src=\\"\\./src=\\"\\.\\./g',
+                 paste0("./md_files/", basename("./07_figures.md"))))
+
+# kniter
+knit_html_with_job(out_dir = "../lab_book/figure_07", fig_path = "./Figures/07/")
+```
+
+### Load data and libraries
+```{r Load_data}
+##################
+# LOAD LIBRARIES #
+##################
+library(tidyverse)
+library(Seurat)
+library(SeuratObject)
+library(tidyseurat)
+library(cowplot)
+library(ggrepel)
+library(gridtext)
+library(png)
+library(grid)
+#library(scatterpie)
+library(patchwork)
+library(openxlsx)
+library(readxl)
+
+# BiocManager::install("ComplexHeatmap")
+library(ComplexHeatmap)
+
+source("../../bin/spatial_visualization.R")
+source("../../bin/plotting_functions.R")
+
+#########
+# PATHS #
+#########
+input_dir <- "../../03_clustering_st_data/"
+result_dir <- "../../results/09_figures/"
+if( isFALSE(dir.exists(result_dir)) ) { dir.create(result_dir,recursive = TRUE) }
+epi_clus <- "^5$|^6$|^7|^8" # res 0.75
+# epi_clus <- "^11$|^6$|^7|^9" # res 1.0
+
+#############
+# LOAD DATA #
+#############
+#DEGs_table <- read_csv(paste0("../../results/05_DGE_clusters_st_data/","DGEs_clusters_wilcox.csv"))
+#DEGs_table <- read_csv(paste0("../../results/05_DGE_clusters_st_data/","DGEs_clusters_wilcox.0.75.csv"))
+DEGs_table <- read_csv(paste0("../../results/05_DGE_clusters_st_data/","DGEs_clusters_wilcox.0.7.csv"))
+DATA <- readRDS(paste0("../../results/03_clustering_st_data/","seuratObj_clustered.RDS"))
+#DATA <- readRDS(paste0(input_dir,"seuratObj_spatial_dist_SM.RDS"))
+
+
+sample_id <- c("P020", "P045", "P050", "P057",
+               "P008", "P031", "P080", "P044", "P026", "P105", 
+               "P001", "P004", "P014", "P018", "P087", "P118",
+               "P021", "P024", "P067", "P081", "P117" ) %>% set_names()
+```
+
+
+### Identify marker genes to seperate epithelial clusters
+```{r Get-best-markrs_epi}
+#######################################
+# FILTER BY P-VAL logFC AND pct.diff #
+######################################
+filter_top.fun <- function(nested_df, n, var, min_pct = 0){
+  if(is.na(n[4])){n[4] = min_pct}
+  res <- nested_df %>% # res <- top20_epi$data[[3]] %>%
+    #mutate(p_val_adj = 1.000-.$p_val_adj) %>%
+    filter(p_val_adj < 0.05) %>%
+    arrange(desc(avg_log2FC)) %>%
+    filter(pct.1 > n[4]) %>%
+    top_n(., n=n[1], abs(!!sym(var[1]))) %>%
+    arrange(desc(avg_log2FC)) %>%
+    #top_n(., n=n[2], Avg_exp) %>%
+    top_n(., n=n[2], abs(!!sym(var[2]))) %>%
+    top_n(., n=n[3], abs(!!sym(var[3]))) 
+  print(res)
+  return(res[1:n[3],])
+}
+
+sel_epi <- list(
+  #Sup_1 = list(n=c(-40, 30, 5),var=c("p_val_adj", "pct.diff", "Avg_exp", "log.pct.diff")),
+  "Superficial" = list(n=c(-40, 50, 5),var=c("p_val_adj", "pct.diff", "log.pct.diff")),
+  #Sup_1 = list(n=c(-100, 70, 5, 0.5),var=c("pct.diff", "p_val_adj", "log.pct.diff")),
+  "Upper IM" = list(n=c(-40, 50, 5),var=c("p_val_adj", "pct.diff", "log.pct.diff")),
+  #Sup_2 = list(n=c(20, 5, 5),var=c("avg_log2FC", "log.pct.diff", "log.pct.diff")),
+  "Lower IM" = list(n=c(25, 7, 5, .5),var=c("avg_log2FC", "log.pct.diff", "log.pct.diff")),
+  "Basal" = list(n=c(10, 5, 5, .8),var=c("avg_log2FC", "log.pct.diff", "log.pct.diff")) )
+
+# Identify the top genes that have a high difference in expression between the clusters
+top20_epi <- DEGs_table %>%
+  filter(grepl(epi_clus, .$clus)) %>%
+  arrange(match(Clusters, names(sel_epi))) %>%
+  mutate(Direction = ifelse(avg_log2FC > 0, "UP", "DOWN")) %>%
+  filter(Direction == "UP") %>%
+  #filter(!(pct.2 > 0.2)) %>%
+  nest(., .by = "Clusters") %>%
+  mutate(data = pmap(., ~filter_top.fun(..2, n=sel_epi[[..1]]$n, var=sel_epi[[..1]]$var)) ) %>%
+  unnest(., cols=c("data"))
+  
+```
+
+### Identify marker genes to seperate Submucosal clusters
+```{r Get-best-markrs_SubMuc}
+#######################################
+# FILTER BY P-VAL logFC AND pct.diff #
+######################################
+filter_top.fun <- function(nested_df, n, var, filt_pct2=0.9){
+  filt <- TRUE
+  #if(is.na(n[4])){n[4] = pct}
+  res <- nested_df %>% # res <- top20_sub$data[[7]] %>%
+    #mutate(p_val_adj = 1.000-.$p_val_adj) %>%
+    #filter(Avg_diff > 0) %>%
+    #filter(pct.2 < n[4]) %>%
+    top_n(., n=n[1], abs(!!sym(var[1]))) %>%
+    {if(filt) filter(., between(pct.2, 0.01,filt_pct2 )) else .} %>%
+    top_n(., n=n[2], abs(!!sym(var[2]))) %>%
+    
+    
+    #{if(filt) filter(., between(pct.1, 0.8,0.3) | between(pct.2, 0.1,0.4)) else .} %>%
+    #arrange(desc(Avg_exp_3)) %>%
+    
+    top_n(., n=n[3], abs(!!sym(var[3]))) #%>%
+    #arrange(desc(!!sym(var[3])))
+  print(res)
+  return(res)
+}
+
+sel_s <- list(
+  #"3" = list(n=c(-60, 30, 5),var=c("p_val_adj", "pct.1", "pct.1"), filt_pct2=.25),
+  "1" = list(n=c(-60, 30, 5),var=c("p_val_adj", "pct.1", "pct.2"), filt_pct2=.25),
+  #"3" = list(filt=F, n=c(-150, 100, 5),var=c("p_val_adj", "pct.diff", "log.pct.diff")),
+  "4" = list( n=c(-100, 50, 5),var=c("p_val_adj", "pct.diff", "log.pct.diff"), filt_pct2=.9),
+  "0" = list( n=c(-100, 50, 5),var=c("p_val_adj", "avg_log2FC", "log.pct.diff"), filt_pct2=.4),
+  #"0" = list( n=c(-60, 30, 5),var=c( "pct.2", "avg_log2FC", "log.pct.diff"), filt_pct2=.4),
+  #"0" = list( n=c( -50, 30, 5, 0.2),var=c( "p_val_adj", "avg_log2FC", "log.pct.diff"), filt=T),
+  "3" = list(n=c(40, -50, 5),var=c("avg_log2FC", "pct.diff", "log.pct.diff"), filt_pct2=.9),
+  "2" = list( n=c(-90, -20, -5),var=c("p_val_adj", "pct.2", "pct.2"), filt_pct2=.5),
+  "9" = list( n=c(-90, 50, 5),var=c("p_val_adj", "pct.diff", "log.pct.diff"), filt_pct2=.9),
+  "10" = list( n=c(-90, 5, 5),var=c("p_val_adj", "pct.1", "pct.1"), filt_pct2=.15)
+  )
+
+# Identify the top genes that have a high difference in expression between the clusters
+top20_sub <- DEGs_table %>%
+  filter(Regulation == "UP") %>%
+  filter(!(grepl(epi_clus, .$clus))) %>%
+  filter(!(grepl("^11$|^12$", .$clus))) %>%
+  mutate(Direction = ifelse(avg_log2FC > 0, "UP", "DOWN")) %>%
+  
+  nest(., .by = "Clusters") %>%
+  arrange(match(Clusters, names(sel_s))) %>%
+  mutate(data = pmap(., ~filter_top.fun(..2, n=sel_s[[..1]]$n, var=sel_s[[..1]]$var, filt=sel_s[[..1]]$filt ))) %>%
+  unnest(., cols=c("data"))
+  
+
+clus_2 <- DEGs_table %>%
+  filter(Regulation == "DOWN") %>%
+  filter(!(grepl(epi_clus, .$clus))) %>%
+  
+    filter(Regulation == "DOWN") %>%
+    filter((grepl("^2$", .$clus))) %>%
+    #top_n(., n=-10, abs(pct.2)) %>%
+    filter(., between(pct.2, 0.3,0.8 )) %>%
+    filter(., between(pct.1, 0.1,0.3 ))
+    # #slice_min(order_by = p_val_adj, n = 20) %>%
+
+
+c( top20_sub$gene[1:15], clus_2$gene, top20_sub$gene[21:35]) 
+clus_2_genes <- c("CD151", "C12orf57", "NPDC1", "TGFBR2", "PECAM1")
+
+# Housekeeping genes
+# clus_2_genes <- c("RPL17", "TUBA","EF1A", "B2M", "RPSD", "GAPDH")
+```
+
+```{r rigdge-plot-marker-genes}
+# probably not going to use
+Idents(DATA) <- "layers"
+Idents(DATA) <- "layers"
+DATA %>%
+filter(., grepl(epi_clus, DATA$Clusters)) %>%
+  RidgePlot(., features = top20_epi$gene[1:2], ncol = 2)
+
+# epithelium
+genes <- top20_epi$gene
+col <- c("#E41A1C","#FF7F00","#C77CFF","#984EA3")
+# Submucosa
+genes <- c( top20_sub$gene[1:10],clus_2_genes , top20_sub$gene[21:35]) 
+col <- c("#00A9FF","#377EB8","#CD9600","#7CAE00","#e0e067","#FF61CC","#FF9DA7")
+
+df <- DATA %>%
+  filter(., grepl(epi_clus, DATA$Clusters)) %>% 
+  #filter(., !(grepl("^5$|^6$|^7|^8|^11$|^12$", DATA$Clusters))) %>% 
+  mutate(., FetchData(., vars = genes)) %>%
+  as_tibble() %>%
+  select(.cell, sp_annot, orig.ident, groups, layers, any_of(genes)) %>%
+  pivot_longer(cols = any_of(genes), names_to = "Genes", values_to = "Expression") %>%
+  mutate(Genes = factor(.$Genes, levels=rev(genes))) %>%
+  arrange(layers) %>%
+  nest(data= -layers) %>%
+  mutate(col = col)
+
+
+p <- df %>%
+  mutate(plot = pmap(., 
+        ~ggplot(..2, aes(x = Expression, y = Genes, fill = ..3)) +
+                geom_density_ridges() +
+                scale_fill_identity() +
+                xlim(c(0,4)) +
+                theme_ridges() + labs(title = ..1 )  +
+                theme(legend.position = "none",
+                      plot.margin = unit(c(0,-0,0,0),units = "pt"),
+                      axis.title.y = element_blank())
+  ))
+
+(p_ <- plot_grid(plotlist = p$plot, ncol=length(col)) )
+ggsave("./Figures/Marker_genes_ridges_epi.pdf", p_, width = 12, height = 5)
+ggsave("./Figures/Marker_genes_ridges_sub.pdf", p_, width = 21, height = 7)
+```
+
+
+```{r 07b_marker-gene-heatmap, fig.width=3.5, fig.height=7.48}
+library(ComplexHeatmap)
+library(circlize)
+
+#### GENES THAT ARE UNIQELY OVERLAPING ####
+getVennOverlap <- function(lsvenn) {
+  
+  ItemsList <- gplots::venn(lsvenn, show.plot = FALSE)
+  print(lengths(attributes(ItemsList)$intersections))
+  return(attributes(ItemsList)$intersections)
+}
+
+################
+# PLOT HEATMAP #
+################
+heatmap.fun <- function(genes, cluster){
+###############
+# GET MATRIX #
+###############
+DAT <- filter(DATA, grepl(paste0("^",cluster,"$",collapse="|"), DATA$layers))
+VariableFeatures(DAT) <- genes
+DAT <- Seurat::ScaleData(DAT)
+matx <- DAT@assays$RNA$scale.data %>% 
+  as.matrix()
+  
+  
+##############
+# ANNOTATION #
+##############
+annot_col <<- DAT@meta.data %>%
+  #mutate(layers = factor(.$layers, levels = cluster)) %>%
+  dplyr::select(1:7) 
+
+# set row order
+matx <- matx[genes,]
+#print( dput(rownames(matx)))
+#col_order <<- rownames(arrange(annot_col, layers) )
+
+clus_cols <- c("#E41A1C","#FF7F00","#C77CFF","#984EA3",
+               "#00A9FF","#377EB8","#CD9600","#7CAE00","#e0e067","#FF61CC","#FF9DA7","#BAB0AC","#A65628")
+clus <- c("Superficial","Upper IM","Lower IM","Basal","1","4","0","3","2","9","10","11","12") #
+clus_cols <- set_names(clus_cols, clus)
+clus_cols <- clus_cols[unique(annot_col$layers)]
+
+ID_cols <- c("#4E79A7","#F28E2B","#E15759","#76B7B2","#59A14F","#EDC948","#9C755F","#B07AA1","#FF9DA7",
+             "#E78AC3","#7FC97F","#BEAED4","#BAB0AC","#FDC086","#FFFF99","#386CB0","#F0027F","#BF5B17",
+             "#66C2A5","#FC8D62","#8DA0CB")
+ID_cols <- set_names(ID_cols, sample_id)
+ID_cols <- ID_cols[unique(annot_col$orig.ident)]
+
+group_cols <- c("#56B4E9","#009E73","#CC79A7","#FC8D62")
+gr <- c('L1', 'L2', 'L3', 'L4') %>% set_names()
+group_cols <- set_names(group_cols, gr)
+group_cols <- group_cols[unique(annot_col$groups)]
+
+################
+# DRAW HEATMAP #
+################
+
+# qwartile 
+q <- quantile(matx, c(0.05, 0.95))
+c(min(matx), max(matx))
+
+# average expression:
+set.seed(123)
+H <- Heatmap(matx, name = " ",
+             col = circlize::colorRamp2(c(q[1]*2, q[1], 0, q[2], q[2]*2), 
+                                        c("#440154FF","#6A51A3","#21908CFF","#FDE725FF","#FF7F00")
+                                        #rev(c("#D7191C","#FDAE61", "white","#ABD9E9","#4575B4"))
+                                        ),
+             #row_km = 6, #column_km = 2, # kmeans change every time you run it
+             column_split =  factor(as.character(annot_col$layers), levels = cluster),
+             #row_split = 10,  # hierarchical static
+             row_order = rownames(matx),
+             column_order = rownames(arrange(annot_col, layers) ),
+             show_column_names = FALSE,
+             show_row_dend = FALSE,
+             show_column_dend = FALSE,
+             #cluster_columns = T,
+             use_raster = F, # removes white vertical lines in the heatmap
+             
+             # text
+             row_title = gt_render("", padding = unit(c(0, 0, 0, 0), "pt")),
+             
+             #column_labels = gt_render(column_labels, padding = unit(c(0, 0, 0, 0), "pt")),
+             column_title_gp = grid::gpar(fontsize = 8),
+             #column_labels_gp =  grid::gpar(fontsize = 8),
+             
+             column_names_gp = grid::gpar(fontsize = 8),
+             row_names_gp = grid::gpar(fontsize = 8),
+            
+             
+             # annotation
+             # right_annotation = right_anno_row, left_annotation = left_anno_row,
+             top_annotation =
+               columnAnnotation(Cluster=annot_col$layers,
+                                #show_legend = FALSE,
+                                show_annotation_name = F,
+                                annotation_legend_param =
+                                  list(grid_height = unit(.2, "mm"),
+                                       grid_width = unit(2, "mm"), title = "",
+                                       labels_gp = gpar(fontsize = 7),
+                                       title_gp = gpar(fontsize = 8)),
+                                simple_anno_size = unit(.1, "cm"),
+                                #gap = unit(1, "cm"),
+                                col=list( Cluster = clus_cols )
+                                ),
+
+             # legend
+             heatmap_legend_param = list(legend_height = unit(20, "mm"), grid_width = unit(2, "mm"), 
+                                         labels_gp = gpar(fontsize = 7))
+             #annotation_legend_param = list(size = unit(2, "mm"))
+
+             ) #colorRampPalette(c(col))(10) 
+
+# set.seed(1) Tassos seed
+H <- draw(H, merge_legend = TRUE)
+return(H)
+}
+# Heatmap global options:
+ht_opt$COLUMN_ANNO_PADDING = unit(.05, "cm")
+ht_opt$HEATMAP_LEGEND_PADDING = unit(0, "cm")
+ht_opt$TITLE_PADDING = unit(.05, "cm")
+ht_opt$DIMNAME_PADDING = unit(.05, "cm")
+
+lvl_layers <- c("Superficial", "Upper IM", "Lower IM", "Basal","1","4","0","3","2","9","10","11","12")
+lvl_layers <- c("Superficial", "Upper IM", "Lower IM", "Basal","2","1","0","3","8","9","10")
+
+# all clusters together: 
+# genes <- c(top20_epi$gene, top20_sub$gene)
+# H <- heatmap.fun(genes = genes, lvl_layers)
+
+##############
+# EPITHELIUM #
+##############
+genes <- top20_epi$gene
+H_epi <- heatmap.fun(genes = genes, lvl_layers[1:4])
+
+# save file
+H_grob <- grid.grabExpr(draw(H_epi, merge_legend = TRUE))  # show_heatmap_legend = FALSE,
+ggsave("./Figures/01/heatmap_clusters_epi.png", H_grob, width = 6, height = 3, limitsize = F)
+
+#############
+# SUBMUCOSA #
+#############
+genes <- c( top20_sub$gene[1:10], clus_2_genes, top20_sub$gene[21:35]) 
+H_sub <- heatmap.fun(genes = genes, lvl_layers[5:11])
+
+# save file
+H_grob <- grid.grabExpr(draw(H_sub, merge_legend = TRUE))  # show_heatmap_legend = FALSE,
+ggsave("./Figures/01/heatmap_clusters_sub.png", H_grob, width = 6, height = 4, limitsize = F)
+# NB! when working with the heatmap, make sure output is printed to the console
+
+```
+
+```{r Marker-genes}
+#######################
+# DEFINE MARKER GENES #
+#######################
+Cell_marker <- c("MS4A1","CD79A", "POU2AF1", "MZB1", "FCRL5", "CD38",
+                 "CD247","CD8A","CD3D","CD3G","CD4","CXCR4",  
+                 "NCAM1", "GZMA", "GNLY",  "FCER1A", "CD1A", "LTB",  
+                 "COL3A1","COL1A1", "APOD","LAMA2", "MYH11","ICAM2","PECAM1","MCAM",   # FLT1 #"COL3A1","COL1A1", "MYH11","LAMA2"
+                 "ATG9B", "KPRP","ALOX12", "PRSS3", "BICDL2", "MT1X")
+names <- c("B cell", "B cell","B cell", "Plasma cell","Plasma cell", "Plasma cell", 
+           "T cell", "T cell","T cell", "T cell", "T cell", "T cell", 
+           "NK cells", "NK cells", "NK cells","Myeloid", "Myeloid", "Myeloid", 
+           "Fibroblast", "Fibroblast", "Fibroblast","Fibroblast", 
+           "Endothelial","Endothelial", "Endothelial", "Endothelial", "Keratinocyte supra", "Keratinocyte supra", 
+           "Keratinocyte supra","Keratinocyte supra", "Keratinocyte basal", "Keratinocyte basal")
+cell_type <- set_names(names, Cell_marker)
+clus_lvl <- rev(c("5", "6", "7", "8", "1","4","0","3","2","9","10","11","12")) 
+
+clus_lvl <- set_names(seq_along(clus_lvl), clus_lvl)
+gene_lvl <- set_names(seq_along(Cell_marker), Cell_marker)
+```
+
+```{r 02a_marker-gene-dotplot, fig.width=8, fig.height=5}
+################
+# FETCH GENES #
+################
+cell_type <- set_names(names, Cell_marker)
+df <- DATA %>%
+  mutate(., FetchData(., vars = c(Cell_marker)) ) %>%
+  as_tibble() %>%
+  select(., .cell, Clusters, any_of(Cell_marker)) %>%
+  pivot_longer(., cols = -c(".cell", "Clusters"), 
+               names_to = "marker", values_to = "values") %>%
+  mutate(., cell = cell_type[as.character(.$marker)]) %>%
+  mutate( marker_id = paste0(.$cell," (",.$marker,")")) %>%
+  #filter(., Clusters != "11"| Clusters != "12") %>%
+  mutate(Clusters = factor(.$Clusters, levels=names(clus_lvl))) %>%
+  mutate(marker = factor(.$marker, levels=Cell_marker)) %>%
+  group_by(Clusters, marker, cell) %>%
+  summarise(Avg = mean(values),
+            Pct = sum(values > 0) / length(values) * 100, .groups="drop") %>%
+  mutate(., ymin = clus_lvl[as.character(.$Clusters)]-0.5,
+            ymax = clus_lvl[as.character(.$Clusters)]+0.5) %>%
+  mutate(., xmin = gene_lvl[as.character(.$marker)]-0.5,
+            xmax = gene_lvl[as.character(.$marker)]+0.5)
+
+########################
+# MARKER GENES DOTPLOT #
+########################
+library(ggnewscale)
+cell_col <- c("#FFD92F","#FFFFCC","#8DA0CB","#eb6062","#A6D854","#E78AC3","#66C2A5","#FC8D62","#FED9A6",
+         "#377EB8","#4DAF4A","#B3B3B3","#984EA3","#FF7F00","#FFFF33","#A65628","#F781BF")
+
+clus_col <- rev(c("#FBAAB1","#FFDAB8","#F1D2FF","#E6B3E9","#92DBFF","#ABC9E1", "#E5C264","#BBD99B", "#E1E2A4", "#FF61CC","#FA9DA7", "#B3B3B3", "#A65628"))
+lab <- c("B cell", "Plasma cell", "T cell", "NK cells", "Myeloid", "Fibroblast", 
+"Endothelial", "Keratinocytes")
+
+ym <- max(df$ymax)
+xm <- length(cell_type)+3.5
+
+clus_lvl <- rev(c("5","6","7","8","1","4","0","3","2","9","10","11","12"))
+# DATA %>%
+#   mutate(Clusters = factor(.$Clusters, levels = clus_lvl)) %>%
+# ggplot(., aes(x=Clusters, y=nCount_RNA, fill=Clusters)) + geom_violin() + scale_fill_manual(values = clus_col)
+
+(A <- ggplot(df, aes(x=marker, y=Clusters)) +
+  geom_point(aes(size = Pct, fill = Avg), color="white", shape=21) +
+  scale_fill_gradientn(colours = viridisLite::magma(100),
+                       guide = guide_colorbar(ticks.colour = "white",
+                                              frame.colour = "white",
+                                              barwidth = .5, barheight = 4),
+                       name = "Average\nexpression") +
+  #facet_grid(~ cell, scales = "free_x") +
+  # Cell type colour bar
+  new_scale_fill() +
+  geom_rect(aes(ymin=max(ymax), ymax=max(ymax)+.4,
+                xmin=xmin, xmax=xmax,
+                fill = cell),data=df,alpha = 0.1,show.legend=F) +
+  annotate("text", x = c(1.8, 5, 10, 14, 17, 20.5, 24.6, 29.5 ), y = 13.7, label = lab) +
+  geom_rect(aes(ymin=min(ymin), ymax=min(ymin)+.3,
+                xmin=xmin, xmax=xmax,
+                fill = cell),data=df,alpha = 0.1,show.legend=F) +
+  scale_fill_manual(values = set_names(cell_col[1:length(unique(cell_type))], unique(cell_type))) +
+    
+  # add extra borders for the colour bars
+  # annotate(x = c(.5,xm,-.5,-.5,.5,-.5), xend=c(.5,xm,xm,xm,xm,-.5),
+  #            y=c(1,1,.5,ym,ym+.5,.5), yend=c(ym+.5,ym+.5,.5,ym,ym+.5,ym),
+  #            geom="segment",colour = "black", linewidth = .6, alpha = 1) +
+  # Cluster bar annnotation
+  new_scale_fill() +
+  geom_rect(aes(ymin=ymin, ymax=ymax,
+                xmin=0.4, xmax=-.5,
+                fill = Clusters),data=df,alpha = 1,show.legend=F) +  
+  scale_fill_manual(values = clus_col) +
+  coord_cartesian(clip="off", xlim=c(.5,xm),ylim=c(.5,ym),expand = F) +
+  scale_size("% detected", range = c(0,6)) +
+
+  ylab("Cluster") + xlab("") +
+  theme_bw() +
+  guides(size = guide_legend(override.aes = list(color = "black"), keywidth = .6, keyheight = .6)) +
+  theme(axis.text.x = element_text(size=8, angle=45, hjust=1, color="black"),
+        axis.text.y = element_text(size=9, color="black",hjust=.9 ),
+        axis.title = element_text(size=9),
+        axis.ticks.y = element_blank(),
+        panel.border = element_blank(),
+        legend.title = element_text(size = 9),
+        legend.margin=margin(0,0,-0,0),
+        plot.margin = unit(c(1,0,-.4,.1),units = "cm") #trbl
+        ) 
+)
+# dev.new(width=8, height=3.5, noRStudioGD = TRUE)
+# ggsave("./Figures/01/marker-gene-dotplot_new.pdf", A, width = 8, height = 3.5) # cell_marker
+```
+
+
+## Not used!
+
+```{r pseudo-bulk, eval=FALSE}
+library(edgeR)
+pseudo.bulk <- function(DATA, group_var, degs=FALSE){
+  # create ID per cluster group
+  DATA <- mutate(DATA, ID_clus = paste0(DATA$orig.ident, "_", DATA[[group_var]]))
+  
+  # get the count matrix for all cells
+  sparse_mtrx <- DATA@assays$RNA@counts
+  
+  # Compute pseudobulk
+  mm <- Matrix::sparse.model.matrix(~0 + DATA$ID_clus)
+  pseudobulk <- sparse_mtrx %*% mm
+  colnames(pseudobulk) <- str_replace(colnames(pseudobulk), "DATA\\$ID_clus", "")
+  
+  # group
+  gr <- str_replace(colnames(pseudobulk), "P\\d\\d\\d_", "")
+  gr <- set_names(gr, colnames(pseudobulk))
+  
+  if(length(degs) > 1){
+    # filter genes based on DEG analysis
+    matx <- as.matrix(pseudobulk)
+    matx <- matx[degs,]
+  }else{
+    # filter genes based on groups
+  dge.list <- DGEList(counts = pseudobulk, group = factor(gr))
+  keep <- filterByExpr(dge.list)
+  matx <- dge.list[keep, , keep.lib.sizes = FALSE]}
+  
+  return(matx)
+}
+
+# remove specified genes:
+remove_genes <- function(x, gene_name) x[!(grepl(gene_name, rownames(x[["RNA"]]))), ]
+
+
+```
+
+```{r UMAP, eval=FALSE}
+sample_id <- c("P020","P045","P050","P057",
+               "P008","P026","P031","P044","P080","P105", 
+               "P001","P004","P014","P018","P087","P108","P118",
+               "P021","P024","P067","P081","P117")
+groups <- c( "L1","L1","L1","L1",
+             "L2","L2","L2","L2","L2","L2",
+             "L3","L3","L3","L3","L3","L3","L3",
+             "L4","L4","L4","L4","L4")
+id_gr <- set_names(groups, sample_id)
+######################
+# GET DEGS  # 
+######################
+pseudo_DEGs <- readRDS(paste0("../results/06_DGE_condition_st_data/","Pseudobulk_across_DEGs.RDS"))
+pseudo_DEGs <- pseudo_DEGs %>%
+  #filter(layers != "11" | layers != "12" ) %>% unnest() %>%
+  mutate(test = map(test, ~filter(.x, PValue <= 0.001) )) %>%
+  unnest(test) %>% .$symbol %>% unique()
+######################
+# NORMALIZE TRX DATA # 
+######################
+matx <- pseudo.bulk(DATA, "layers", degs = pseudo_DEGs)
+matx <- pseudo.bulk(DATA, "orig.ident")
+#### CPM-log2 ####
+# counts per million (CPM) log2 transfomed counts:
+matrix_trans <- cpm( matx, log=T)
+
+########
+# UMAP # 
+########
+lvl_layers <- c("Superficial","Upper IM","Lower IM","Basal","3","4","0","2","1","9","10","11","12")
+col <- c("#E41A1C","#FF7F00","#C77CFF","#984EA3","#00A9FF","#377EB8","#CD9600","#7CAE00","#e0e067","#FF61CC","#FF9DA7","#999999","#A65628")
+
+lvl_layers <- sample_id
+col <-  c("#4E79A7", "#F28E2B", "#E15759", "#76B7B2", "#59A14F", "#EDC948", "#9C755F", "#B07AA1", "#FF9DA7", "#E78AC3", "#7FC97F", "#BEAED4", "#BAB0AC", "#FDC086", "#FFFF99", "#386CB0", "#F0027F", "#BF5B17", "#666666", "#66C2A5", "#FC8D62", "#8DA0CB")
+
+#### UMAP analysis ####
+set.seed(1);umap<-uwot::umap(t(matrix_trans), 
+                 n_neighbors=15, init="spectral", scale=T)
+umap_df <- tibble("UMAP 1"=umap[,1],"UMAP 2"=umap[,2], 
+                  "u_ID"=rownames(umap), "group"=gr[rownames(umap)], "ID"=str_extract(rownames(umap), "P\\d\\d\\d") ) %>%
+            mutate(group = factor(.$group, levels = lvl_layers)) %>%
+            mutate(g = id_gr[.$ID]) 
+
+
+txt_df <- umap_df %>% 
+  filter(., grepl("^P", .$txt)) #%>%
+  #mutate("UMAP 2" = .$`UMAP 2`+ c(0, .1, rep(0,ncol(.))))
+
+#### UMAP plotting by groups ####
+UMAP.fun <- function(umap_df, group){
+  # dev.new(width=8.5, height=8)
+  p <- ggplot(umap_df, aes(x=`UMAP 1`, y=`UMAP 2`, fill={{group}}))+ 
+    #geom_jitter( shape=21, size=3, color="white", width=.5, height=.5) +  # Tassos used jitter
+    geom_point( shape=21, size=3, alpha = .7, stroke =1) +  
+    scale_fill_manual(values=col) + 
+    # geom_text(data=txt_df, aes(x=`UMAP 1`, y=`UMAP 2`, label=txt), size=3, vjust = -.5, nudge_x = 0.03, color="gray51") +
+    theme_void() +
+    xlab("UMAP 1") + ylab("UMAP 2") +
+    theme(panel.border = element_rect(colour = "black", fill=NA),
+          legend.title = element_text(size = 8),
+          legend.text = element_text(size = 8),
+          legend.position = "bottom",
+          plot.margin = unit(c(1,.5,1,.5), "lines"),
+          axis.title.x.bottom = element_text(margin = margin(b = 1)),
+          axis.title.y.left = element_text(margin = margin(l = 0), angle = 90),
+          axis.ticks=element_line(color="black"), 
+          axis.title=element_blank()) 
+  return(p)
+}
+
+(p <- UMAP.fun(umap_df, g))
+(p_T <- UMAP.fun(umap_df, Tissue_gr_v3))
+
+# dev.new(width=8, height=3.5, noRStudioGD = TRUE)
+(p_ <- plot_grid(p_L, p_T, ncol = 2 ) )
+```

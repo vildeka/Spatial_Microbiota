@@ -1,0 +1,111 @@
+---
+title: "Supplemental Figure 2"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+format:
+  html:
+    embed-resources: true
+    code-fold: show
+params:
+  fig.path: "`r paste0(params$fig.path)`" #./Figures/
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  fig.width     = 6.6929133858,
+  fig.path      = params$fig.path,#"../Figures/",
+  fig.align     = "center",
+  message       = FALSE,
+  warning       = FALSE,
+  dev           = c("png"),
+  dpi           = 300,
+  fig.process = function(filename){
+    new_filename <- stringr::str_remove(string = filename,
+                                        pattern = "-1")
+    fs::file_move(path = filename, new_path = new_filename)
+    ifelse(fs::file_exists(new_filename), new_filename, filename)
+  }
+  )
+# setwd("~/work/Brolidens_work/Projects/Spatial_Microbiota/src/Manuscript")
+```
+
+```{r background_job, eval=FALSE, include=FALSE}
+source("../../bin/render_with_jobs.R")
+
+# quarto
+# render_html_with_job(out_dir = lab_dir)
+# fs::file_move(path = file, new_path = paste0(lab_dir, file))
+
+# currently using quarto for github and kniter for html due to source code option 
+render_git_with_job(fig_path = "./Figures/S2/")
+system2(command = "sed", stdout = TRUE,
+        args = c("-i", "''","-e", 's/src=\\"\\./src=\\"\\.\\./g',
+                 paste0("./md_files/", basename("./Figure_S2.md"))))
+
+# kniter
+knit_html_with_job(out_dir = "../lab_book/figure_S2", fig_path = "./Figures/S2/")
+```
+
+### Load data and libraries
+```{r Load_data}
+##################
+# LOAD LIBRARIES #
+##################
+library(tidyverse)
+library(Seurat)
+library(SeuratObject)
+library(tidyseurat)
+library(cowplot)
+library(ggrepel)
+library(png)
+library(grid)
+
+source("../../bin/spatial_visualization.R")
+source("../../bin/plotting_functions.R")
+
+#########
+# PATHS #
+#########
+input_dir <- "../../results/03_clustering_st_data/"
+result_dir <- "../../results/09_figures/"
+if( isFALSE(dir.exists(result_dir)) ) { dir.create(result_dir,recursive = TRUE) }
+epi_clus <- "^5$|^6$|^7|^9" # non-filt
+
+#############
+# LOAD DATA #
+#############
+DATA <- readRDS(paste0(input_dir,"seuratObj_clustered.RDS"))
+
+#################
+# COLOUR PALLET #
+#################
+sample_id <- c("P020", "P045", "P050", "P057",
+        "P008", "P031", "P080", "P044", "P026", "P105", 
+        "P001", "P004", "P014", "P018", "P087", "P118",
+        "P021", "P024", "P067", "P081", "P117" )
+
+colors <-  c("#CD9600","#00A9FF","#e0e067","#7CAE00","#377EB8","#E41A1C","#FF7F00","#C77CFF",
+              "#984EA3","#FF61CC","#FF9DA7","#999999","#A65628","#B07AA1", "#FF9DA7")
+
+```
+
+```{r S2_clusters-on-tissue, fig.width = 12.5, fig.height = 13.5, dpi=1000}
+# dev.new(width=12.5, height=12.5, noRStudioGD = TRUE)
+  
+(plot <- plot_st_meta.fun( DATA,
+                feat =  "Clusters",
+                zoom = "zoom",
+                colors = colors,
+                alpha = .9,
+                ncol = 4,
+                txt_size = .7,
+                #annot_col = "#dbd9d9",
+                annot_line = .1,
+                img_alpha = 0,
+                point_size = .8) +
+  theme(plot.margin = unit(c(1, 1, 1, 1), "cm")) )
+
+# ggsave("./Figures/S1/FigureS2.pdf", clus, width = 7, height = 3.3, dpi = 500, bg = "white")
+```
+

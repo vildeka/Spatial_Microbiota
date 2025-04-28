@@ -1,0 +1,313 @@
+---
+title: "Figure 4 Immunoglobulin plots"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+format:
+  html:
+    embed-resources: true
+    code-fold: show
+params:
+  fig.path: "`r paste0(params$fig.path)`" #./Figures/
+editor_options: 
+  chunk_output_type: console
+---
+## Heatmap of significant genes per cluster
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  fig.width     = 6.6929133858,
+  fig.path      = params$fig.path,#"../Figures/",
+  fig.align     = "center",
+  message       = FALSE,
+  warning       = FALSE,
+  dev           = c("png"),
+  dpi           = 300,
+  fig.process = function(filename){
+    new_filename <- stringr::str_remove(string = filename,
+                                        pattern = "-1")
+    fs::file_move(path = filename, new_path = new_filename)
+    ifelse(fs::file_exists(new_filename), new_filename, filename)
+  }
+  )
+#  setwd("~/work/Brolidens_work/Projects/Spatial_Microbiota/src/Manuscript")
+```
+
+```{r background_job, eval=FALSE, include=FALSE}
+source("../../bin/render_with_jobs.R")
+
+# quarto
+# render_html_with_job(out_dir = lab_dir)
+# fs::file_move(path = file, new_path = paste0(lab_dir, file))
+
+# currently using quarto for github and kniter for html due to source code option 
+render_git_with_job(fig_path = "./Figures/02&03/")
+system2(command = "sed", stdout = TRUE,
+        args = c("-i", "''","-e", 's/src=\\"\\./src=\\"\\.\\./g',
+                 paste0("./md_files/", basename("./07_figures.md"))))
+
+# kniter
+knit_html_with_job(out_dir = "../lab_book/figure_07", fig_path = "./Figures/07/")
+```
+
+### Load data and libraries
+```{r Load_data}
+##################
+# LOAD LIBRARIES #
+##################
+library(tidyverse)
+library(Seurat)
+library(SeuratObject)
+library(tidyseurat)
+library(cowplot)
+library(patchwork)
+library(openxlsx)
+
+source("../../bin/spatial_visualization.R")
+source("../../bin/plotting_functions.R")
+
+#########
+# PATHS #
+#########
+input_dir <- "../../results/06_DGE_condition_st_data/"
+result_dir <- "./Figures/02&03/"
+if( isFALSE(dir.exists(result_dir)) ) { dir.create(result_dir,recursive = TRUE) }
+epi_clus <- "^5$|^6$|^7|^8" # res 0.75
+# epi_clus <- "^11$|^6$|^7|^9" # res 1.0
+
+ord <- c("Superficial", "Upper IM", "Lower IM", "Basal","1","4","0","3","2","9","10","11","12")
+ord1 <- c("5", "6", "7", "8","1","4","0","3","2","9","10","11","12")
+sample_id <- c("P020", "P045", "P050", "P057",
+               "P008", "P031", "P044","P080", "P026", "P105", 
+               "P001", "P004", "P014", "P018", "P087", "P118",
+               "P021", "P024", "P067", "P081", "P117" ) %>% set_names()
+
+#############
+# LOAD DATA #
+#############
+DATA <- readRDS(paste0("../../results/03_clustering_st_data/","seuratObj_clustered.RDS"))
+DEGs_table <- read_csv(paste0(input_dir,"DGEs_condition_wilcox.0.7.csv"))
+pseudo_DEGs <- readRDS(paste0(input_dir,"Pseudobulk_across_DEGs.RDS"))
+#DATA <- readRDS(paste0(input_dir,"seuratObj_spatial_dist_SM.RDS"))
+
+```
+
+```{r}
+D <- DEGs_table %>%
+  filter(., p_val_adj < 0.05) %>%
+  filter(., !(grepl("0|^3|9|10|11|12", .$subgroup))) %>%
+  #filter(., cluster == "L4") %>%
+  mutate(sp_annot = ifelse(grepl("\\d", .$layers), "SubMuc", "epi")) %>%
+  split(~sp_annot) 
+```
+
+```{r dot-plot}
+# NOT USED
+#################
+# PLOT FUNCTION #
+#################
+morf_DEGs_plot <- function(genes = genes_epi, clus="^5$|^6$|^7|^8"){
+  df <- DATA %>%
+    mutate(., FetchData(., vars = c(names(genes)), slot = "counts")) %>%
+    filter(., grepl(clus, .$Clusters)) %>%
+    as_tibble() %>%
+    select(1:5, layers, all_of(names(genes))) %>%
+    pivot_longer(cols = any_of(names(genes)), names_to = "gene", values_to = "values") %>%
+    # filter(gene == "LGALS7") %>%
+    group_by( groups, gene, layers) %>%
+    summarize(sum_counts = sum(values), .groups="drop") %>%
+    mutate("Sum counts(log10)" = log10(.$sum_counts)) %>%
+    arrange(`Sum counts(log10)`) %>%
+    mutate(type = genes[.$gene])
+  
+  absmax <- function(x) { x[which.max( abs(x) )]}
+  ord <<- df %>%
+    #pivot_wider(id_cols = -`Sum counts(log10)`,names_from = "groups", values_from = "sum_counts") %>%
+    pivot_wider(id_cols = -sum_counts, names_from = "groups", values_from = `Sum counts(log10)`) %>%
+    mutate(diff_L1_L4 = L4-L1, 
+           diff_L2_L4 = L4-L2, 
+           diff_L3_L4 = L4-L3, .by = "gene") %>%
+    rowwise() %>% 
+    # Identifies the larges value of eah row among the L1-L4 columns:
+    mutate(Regulation = sum(c_across(starts_with("diff")) ),
+           max = paste0(names(.[4:7])[c_across(starts_with("L",ignore.case=F)) == 
+                                        absmax(c_across(starts_with("L",ignore.case=F)))], collapse = '_') ) %>%
+    ungroup() %>%
+    mutate(Regulation = ifelse(.$Regulation < 0, "DOWN", "UP"),
+           max = str_extract(.$max, "L\\d"))
+  
+  m <- ifelse(clus == "^5$|^6$|^7|^8", "Epithelial", "Submucosal")
+  #write.xlsx(ord, paste0(result_dir, "Selected_DEGs_FIG2-3_", m, ".xlsx"))
+  #####################
+  # TOP DEGs PLOTTING #
+  #####################
+  g_ord <- arrange(ord, diff_L1_L4) %>% pull("gene") %>% unique()
+  
+  col <- c("L1"="#FF7F00", "L2"="#FED9A6", "L3"="#6A51A3", "L4"="#9E9AC8" ) # "#FFFFB3", "#BEBADA","#8DD3C7", "#FB8072",
+  col <- c("L1"="#56B4E9","L2"="#009E73","L3"="#CC79A7", "L4"="#FC8D62")
+  
+  (B <- left_join(df, select(ord, Regulation, max, gene), by="gene") %>%
+      #mutate(., gene = factor(gene, levels=g_ord)) %>%
+      ggplot2::ggplot(data=., aes(x=fct_reorder2(gene, Regulation,`Sum counts(log10)`), y=`Sum counts(log10)`)) +
+    geom_point(aes(col=groups), size = 2) +
+    scale_colour_manual(values = col) +
+    facet_grid(cols=vars(), rows = vars(layers), scales = "free_x", space = "free_x") +
+    #facet_wrap("max", ncol = 2, strip.position = "top", scales = "free_x", shrink = F) +
+    theme_minimal() +
+    theme(legend.position = "bottom",
+          plot.margin = unit(c(5,-1,5,1),units = "pt"),
+          legend.margin = margin(-15,2,-8,2), # moves the legend box
+          legend.title = element_blank(),
+          legend.text = element_text(size = 8),
+          legend.spacing.x = unit(4, 'pt'),
+          axis.title = element_text(size=8),
+          axis.text.x = element_text(size=8, angle=45, hjust=1, color="black"),
+          axis.title.x = element_blank(),
+          #text = element_text(size = 10),
+    ) )
+}
+geneid  <- c("IGHG4", "IGLC2", "IGHG1", "IGHA2", "IGHA1")
+genes <- DEGs_table %>% filter(gene %in% geneid) %>% filter(grepl("^1$|Basal", .$layers)) %>% distinct(gene, layers) %>% deframe()
+(Immuno <- morf_DEGs_plot(genes = genes, clus="^1$|8"))
+```
+
+
+```{r violin-plot}
+###############
+# VIOLIN PLOT #
+###############
+# https://stackoverflow.com/questions/35717353/split-violin-plot-with-ggplot2
+
+feature <- c("IGHG4", "IGLC2", "IGHG1", "IGHA2", "IGHA1", "CD81", "IGKC", "JCHAIN")
+feature <- c("IGHA1","IGHG1", "CD81", "IGKC", "JCHAIN")
+col <- c("L1"="#56B4E9","L2"="#009E73","L3"="#CC79A7", "L4"="#FC8D62")
+facet <- "layers"
+group.by <- "groups"
+ncol <- 1
+
+DEGs_df <- DATA %>%
+  filter((grepl("Basal|^1$", .$layers))) %>%
+  filter((grepl("L1|L2", .$groups))) %>%
+  mutate(., FetchData(., vars = c(feature)) ) %>%
+  #mutate(across(any_of(feature), na_if, 0)) %>% # NB! removes zero values 
+  select(any_of(c(feature, facet, group.by, "layers"))) %>%
+  pivot_longer(cols = any_of(feature), names_to = "feature", values_to = "val") %>%
+  mutate(comb = paste0(.$groups, "_",.$layers)) %>%
+  mutate(groups = factor(.$groups, levels = rev(sort(unique(.$groups)))))
+
+# groups on y-axis, genes on x axis
+# not used:
+violin_mean_plot <- function(DEGs_df){
+  m <- max(na.omit(DEGs_df[["val"]]))/1 # try e.g 2
+  DEGs_df %>%
+    ggplot(aes(y=.data[[group.by]], x=.data[["val"]], col=.data[[group.by]])) +
+    geom_violin() + # {if(length(feature == 1)) ggtitle(feature)} +
+    #geom_boxplot(fill = "transparent", notch = T, outlier.size = .5, outlier.colour = "red") +
+    geom_jitter(width = 0.2, height = 0.3, alpha = 0.2, size=.1) +
+    stat_summary(aes(x = val), fun=median, geom="crossbar", linewidth=.3, color="black") +
+    scale_color_manual(values = col) +
+    my_theme + NoLegend() + #xlim(c(0, m)) +
+    theme(text = element_text(size = 10)) +
+    #       axis.text.x = element_text(angle = 30, hjust=1),
+    #       plot.title = element_text(hjust = 0.5),
+    #       axis.title.y = element_blank(),
+    #       axis.title.x = element_blank()) +
+    #facet_wrap(~.data[[facet]], ncol = ncol, strip.position = c("right", "bottom", "left", "top"))
+    facet_grid(rows = vars(layers), cols = vars(feature)) #, strip.position = c("right", "bottom", "left", "top"))
+}
+
+# groups on x-axis, genes on x axis
+# used for figure 4
+violin_mean_plot <- function(DEGs_df){
+  m <- max(na.omit(DEGs_df[["val"]]))/1 # try e.g 2
+  DEGs_df %>%
+    ggplot(aes(x=.data[[group.by]], y=.data[["val"]], col=.data[[group.by]])) +
+    geom_violin() + # {if(length(feature == 1)) ggtitle(feature)} +
+    stat_summary(aes(y = val), fun=median, geom="crossbar", linewidth=.3, color="black") +
+    #geom_boxplot(fill = "transparent", notch = T, outlier.size = .5, outlier.colour = "red") +
+    geom_jitter(width = 0.3, height = 0.2, alpha = 0.2, size=.1) +
+    scale_color_manual(values = col) + ylab("Expression") +
+    my_theme + NoLegend() + #xlim(c(0, m)) +
+    theme(text = element_text(size = 12),
+          axis.line = element_blank(),
+          panel.border = element_rect(colour = "gray") ) +
+    #       axis.text.x = element_text(angle = 30, hjust=1),
+    #       plot.title = element_text(hjust = 0.5),
+    #       axis.title.y = element_blank(),
+    #       axis.title.x = element_blank()) +
+    #facet_wrap(~.data[[facet]], ncol = ncol, strip.position = c("right", "bottom", "left", "top"))
+    facet_grid(rows = vars(layers), cols = vars(feature)) #, strip.position = c("right", "bottom", "left", "top"))
+}
+
+# dev.new(width=6.7, height=3, noRStudioGD = TRUE) 
+A <- violin_mean_plot(DEGs_df)
+ggsave("./Figures/04/Fig_L1_L2_viol.png", A, width = 4, height = 4) #, dpi = 300
+ggsave("./Figures/04/Fig_viol.png", A, width = 6.7, height = 3) #, dpi = 300
+
+```
+
+```{r genes-on-tissue}
+######################
+# PLOTTING ON TISSUE #
+######################
+col = c("#EFEDF5", "#DADAEB", "#BCBDDC", "#9E9AC8", "#807DBA", "#6A51A3", "#54278F", "#3F007D")
+geneid <- c("IGHG4", "IGLC2", "IGHG1", "IGHA2", "IGHA1")
+
+# ggsave("./Figures/02&03/Tissue_Immuno.png", p, width = 12.5, height = 12.5, bg = "white") #, dpi = 300
+# dev.new(height=3, width=7, noRStudioGD = TRUE)
+plots_all <- geneid %>%
+  map(., ~plot_spatial.fun(
+      DATA,
+      sampleid = sample_id,
+      save_space = T,
+      colors = col, 
+      geneid = .x,
+      zoom = "zoom",
+      ncol = 4,
+      img_alpha = 0,
+      point_size = .5)
+    )
+
+# dev.new(width=8, height=8, noRStudioGD = TRUE)
+plots_all[[1]]
+
+################
+# SAVE RESULTS #
+################
+pdf(file=paste0("./Figures/04/Tissue_Immuno_all.pdf"), 
+    #width = 8.5, height = 10 # Epi
+    width = 8, height = 8 # Sub
+)
+plots_all
+dev.off()
+
+######################
+# PLOTTING ON TISSUE #
+######################
+sample_id_ <- c("P057","P044")
+
+
+plots_rep <- geneid %>%
+  map(., ~plot_spatial.fun(
+      DATA,
+      sampleid = sample_id_,
+      save_space = F,
+      colors = col, 
+      geneid = .x,
+      zoom = "zoom",
+      ncol = 4,
+      img_alpha = 0,
+      point_size = .5)
+    )
+# dev.new(width=3.3, height=2, noRStudioGD = TRUE)
+plots_rep[[1]]
+```
+
+```{r}
+#########################
+# COMBINE PANEL A AND B #
+#########################
+# dev.new(width=6.7, height=3, noRStudioGD = TRUE) 
+B <- plot_grid(plots_rep[[4]], plots_rep[[5]], ncol = 1)
+(p <- plot_grid(A, B, rel_widths = c(1, 1), labels = c("a", "b")))
+ggsave("./Figures/04/Figure_4.png", p, width = 6.7, height = 3, bg = "white") #, dpi = 300
+```
+

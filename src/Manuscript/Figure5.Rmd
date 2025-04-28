@@ -1,0 +1,928 @@
+---
+title: "Figure 5"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+format:
+  html:
+    embed-resources: true
+    code-fold: show
+params:
+  fig.path: "`r paste0(params$fig.path)`" #./Figures/
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  fig.width     = 6.6929133858,
+  fig.path      = params$fig.path,#"../Figures/",
+  fig.align     = "center",
+  message       = FALSE,
+  warning       = FALSE,
+  dev           = c("png"),
+  dpi           = 300,
+  fig.process = function(filename){
+    new_filename <- stringr::str_remove(string = filename,
+                                        pattern = "-1")
+    fs::file_move(path = filename, new_path = new_filename)
+    ifelse(fs::file_exists(new_filename), new_filename, filename)
+  }
+  )
+
+# setwd("~/work/Brolidens_work/Projects/Spatial_Microbiota/src/Manuscript/")
+```
+
+```{r background_job, eval=FALSE, include=FALSE}
+source("../bin/render_with_jobs.R")
+
+# quarto
+# render_html_with_job(out_dir = lab_dir)
+# fs::file_move(path = file, new_path = paste0(lab_dir, file))
+
+# currently using quarto for github and kniter for html due to source code option 
+render_git_with_job(fig_path = "./Figures/08/")
+system2(command = "sed", stdout = TRUE,
+        args = c("-i", "''","-e", 's/src=\\"\\./src=\\"\\.\\./g',
+                 paste0("./md_files/", basename("./08_spatial_distance.md"))))
+
+# kniter
+knit_html_with_job(out_dir = "../lab_book/08_spatial_distance", fig_path = "./Figures/08/")
+```
+
+### Load data and libraries
+```{r Load_data}
+##################
+# LOAD LIBRARIES #
+##################
+library(tidyverse)
+library(Seurat)
+library(SeuratObject)
+library(tidyseurat)
+library(cowplot)
+library(patchwork)
+library(openxlsx)
+
+source("../bin/spatial_visualization.R")
+source("../bin/plotting_functions.R")
+
+#########
+# PATHS #
+#########
+input_dir <- "../results/03_clustering_st_data/"
+result_dir <- "../results/08_spatial_dist/"
+if( isFALSE(dir.exists(result_dir)) ) { dir.create(result_dir,recursive = TRUE) }
+
+
+ord <-  c("Superficial","Upper IM","Lower IM","Basal","1","4","0","3","2","9","10","11","12")
+sample_id <- c("P020", "P045", "P050", "P057",
+        "P008", "P031", "P080", "P044", "P026", "P105", 
+        "P001", "P004", "P014", "P018", "P087", "P118",
+        "P021", "P024", "P067", "P081", "P117" ) %>% set_names()
+
+#############
+# LOAD DATA #
+#############
+meta <- read_csv("../../data/ST-samples_metadata.csv")
+DATA <- readRDS(paste0(input_dir,"seuratObj_clustered.RDS"))
+pseudo_DEGs <- readRDS(paste0(input_dir,"Pseudobulk_across_DEGs.RDS"))
+DEGs_table <- read_csv(paste0("../../results/06_DGE_condition_st_data/","DGEs_condition_wilcox.0.7.csv")) %>%
+  mutate(layers = factor(.$layers, levels = ord))
+enrich_df <- readRDS(paste0("../results/09_hdWGCNA/all_Clus_4000DEGs/", "Enrichment.RDS"))
+
+#################
+# COLOUR PALLET #
+#################
+col_epi <- c("#E41A1C","#FF7F00","#C77CFF","#984EA3")
+col_submuc <- c("#CD9600","#00A9FF","#e0e067","#7CAE00","#377EB8","#00BFC4",NA, NA,"#984EA3", "#FF61CC","#FF9DA7")
+col_trajectory <- c("grey70", "orange3", "firebrick", "purple4")
+
+col_feat <- c("#EFEDF5", "#DADAEB", "#BCBDDC", "#9E9AC8", "#807DBA", "#6A51A3", "#54278F", "#3F007D") # Purples
+```
+
+```{r enrichment-modules}
+##########################
+# GET GENE MODULE SCORES #
+##########################
+# gets the genes that were 
+get_module.fun <- function(term, module){
+  module <- enrich_df %>%
+    bind_rows() %>%
+    mutate(Term = ifelse(grepl("GO",.$Term), str_match(.$Term, "^(.+?)\\s\\((.+)\\)$")[,2], .$Term) ) %>%
+    arrange(Adjusted.P.value) %>%
+    filter(module == module) %>%
+    filter(Term == term) %>% 
+    .$Genes %>% .[1] %>%
+    str_split_1(., ";")
+}
+
+get_avg_id.fun <- function(col, dot, scale=TRUE){
+  if(scale){avg <- "avg.exp.scaled"}else{avg <- "avg.exp"}
+  gr <- c(rep(c("L1"), 4), rep(c("L2"), 6), rep(c("L3"),6), rep(c("L4"),5)) %>% set_names(., sample_id)
+  p <- map(dot, ~as_tibble(pluck(.x, "data" ))) %>% map(., ~mutate(.x, avg.exp = setNames(.[[avg]], .$id)) )
+  
+  #id <- map(col, ~filter(DATA, sp_annot == "SubMuc")) %>% map(~.x %>% summarize(avg.exp = median(MS22), .by = "orig.ident") %>% rename(id="orig.ident")) %>%
+    # median
+  id <- map(col, ~summarize(DATA, avg.exp = median(.data[[.x]]), .by = "orig.ident")) %>% map(., ~rename(.x, id="orig.ident")) %>%
+    # avg.exp
+  #id <- map(col, ~DotPlot(DATA, features=.x, group.by = 'orig.ident')$data) %>% 
+    map(~ .x %>% mutate(gr = gr[ as.character(.$id) ])  %>% 
+           group_by(., gr)) %>%
+    map2(., p, ~slice(.x, which.min(abs(avg.exp - .y[[avg]][cur_group_id()] ))) ) %>% map(., ~as.character(.$id))
+  print( id )
+  return(id)
+}
+
+map_df <- enrich_df %>%
+  bind_rows() %>%
+  mutate(Term = ifelse(grepl("GO",.$Term), str_match(.$Term, "^(.+?)\\s\\((.+)\\)$")[,2], .$Term) ) %>%
+  group_by(module, db) %>% 
+  top_n(., -5, Adjusted.P.value) %>% 
+  ungroup() %>%
+  mutate("MS"= paste0("MS", 1:nrow(.))) %>%
+  mutate(Genes = map(Genes, ~str_split_1(.x, ";"))) %>%
+  select(., Term, MS, module, db, Genes) %>%
+  mutate(MS = setNames(.[["MS"]], .$Term))
+
+# l <- map2(terms, mod, ~get_module.fun(.x, .y))
+l <- pmap(map_df, ~get_module.fun(..1, ..2)) %>% set_names(., map_df$Term)
+
+# DATA <- select(DATA, -starts_with("MS_"))
+# https://www.waltermuskovic.com/2021/04/15/seurat-s-addmodulescore-function/
+DATA <- AddModuleScore(DATA, features = l, ctrl = 5, name = "MS", seed = 1)
+# SM.data <- select(DATA@meta.data, contains("MS")) %>% as_tibble(rownames = "barcodes") 
+# map(colnames(SM.data)[-1], ~max(SM.data[[.x]]))
+
+enrich_modules_plot <- function(col, title, SM, ..., min_v=-1, max_v=2.5, id=NULL, dot_scaled=TRUE ){
+  # dots 
+  dot <<-  map(col, ~DotPlot(DATA, features=.x, group.by = 'groups', dot.min=0.1, scale = dot_scaled) + 
+                 scale_colour_gradientn(colours = cols, limits = c(min_v,max_v),oob = scales::squish) +
+                 scale_size_continuous(limits = c(0,100),range = c(.1,6)) + guides(colour = "none") )
+  if(is.null(id)){id <- get_avg_id.fun(col, dot, scale=dot_scaled)}else{id <- map(title, ~id)}
+  #dot <<-  DotPlot(DATA, features=col, group.by = 'groups', dot.min=0.1)$data %>% split(~features.plot)
+  
+  # plotting
+  p <<- map2(col, id, ~plot_spatial.fun(DATA, sampleid=.y, max_val = 2.5, 
+                 colors = cols, save_space = F, lab = T,
+                 ncol = 4, annot_line = .1,
+                 geneid=.x, 
+                 point_size = 0.2, zoom="zoom") + 
+        theme(plot.margin = unit(c(.9,0,0,0), "lines")) )
+  # legend
+  legend_d <- get_legend(dot[[1]] + theme(legend.title = element_blank())) # legend.margin=margin(0,0,0,0), 
+  legend_p <- get_legend(p[[1]] + theme(legend.justification="left",legend.title = element_blank()) )
+  legend <- plot_grid( legend_d, legend_p, ncol = 1)
+  
+  # add
+  n <- pmap(list(p, dot), ~ggdraw(..1 + theme(legend.position = "none") ) +
+    draw_plot(
+      
+      {..2 + theme_void() +  coord_flip(clip = "off") + 
+          theme(legend.position = "none") }, #title= element_text(face = 'plain', size = 7, hjust = 0), 
+      # {ggplot() + geom_point(data = .y, aes(x=id, y=features.plot, size=pct.exp, col=avg.exp), show.legend = F,) + 
+      #    theme_void() + coord_cartesian(clip = "off") + scale_colour_gradientn(colours = cols) }, # limits = c(0,2),oob = scales::squish
+      # The distance along a (0,1) x-axis to draw the left edge of the plot
+      x = 0.7, # The distance along a (0,1) y-axis to draw the bottom edge of the plot
+      y = .86, # The width and height of the plot expressed as proportion of the entire ggdraw object
+      width = 0.2, height = 0.1) ) %>%
+    
+   #map2(.,title, ~.x + plot_annotation(title = .y)) %>% wrap_plots(., ncol = 1) %>%
+   plot_grid(plotlist = ., ncol = 1, labels = title, label_size = 7, label_x = .15, label_fontface = "plain", hjust = 0) %>%
+      #wrap_plots(., legend, ncol = 2, widths = c(1,.2))
+      plot_grid(., legend, ncol = 2, rel_widths = c(1,.2)) # %>%
+     #ggdraw(.) + draw_plot(legend_p, x = .9, y = .65, height = .2) + draw_plot(legend_d, x = .9, y = .1, height = .2)
+   #ggsave(filename=paste0("./Figures/03/","enrichment_module_",SM,".png"),n,  width = 8, height = 1.3*length(title), bg = "white", dpi = 500)
+  # dev.new(height=1.3*2, width=7, noRStudioGD = TRUE)
+  return(n)
+}
+
+# all top terms
+id <- c("P045","P026","P014","P067") %>% set_names()
+map_df %>% 
+  nest(data = -module) %>%
+  pmap(., ~enrich_modules_plot(..2$MS, ..2$Term, ..1, dot_scaled = FALSE))
+
+
+# plot dotplot of all terms in order to identify the ones differnig between groups:
+cols <- c("#5E4FA2","#3288BD","#ABDDA4","#E6F598","#FFFFBF","#FEE08B","#FDAE61","#F46D43","#D53E4F","#9E0142")
+cols <- c("#5E4FA2","#3288BD","white","#FFFFBF","#E6F598","#FEE08B","#FDAE61","#F46D43","#D53E4F","#9E0142")
+cols <- c("#D3D3D3","#EFEDF5","white","#DADAEB","#BCBDDC","#9E9AC8","#807DBA","#6A51A3","#54278F","#3F007D") #"#EFEDF5","#D3D3D3",
+min_v=-1
+max_v=2.5
+name=TRUE
+p <- split(map_df, ~module) %>% imap(~ .x %>% .$MS) %>% 
+  imap(., ~DotPlot(object=if(name){rename(DATA, !!! .x)}else{DATA}, 
+                   features=if(name){names(.x)}else{as.vector(.x)}, group.by = 'groups', dot.min=0.1, scale=FALSE) + 
+    scale_colour_gradientn(colours = cols, limits = c(min_v,max_v),oob = scales::squish) +
+    scale_size_continuous(limits = c(0,100),range = c(.1,6)) + coord_flip() + ggtitle(.y) )
+p[[4]]
+p_s[[4]]
+
+# select terms with diffrences between groups:
+terms <- c("MS2","MS37","MS27","MS24","MS15","MS45", "MS53", "MS47", "MS51") #"MS16", "MS17", "MS15","MS23", "MS28", "MS37", "MS48", "MS51", "MS53"
+terms <- c("extracellular matrix organization", "Protein digestion and absorption","SMAD4",
+           "Oxidative phosphorylation","ESR1","cytoplasmic translation",
+           "keratinocyte differentiation","Pathogenic Escherichia coli infection", "ETS1",
+           "RNA processing", "RARA", "NFKB1")
+# NB! have look at the max and min values and check that the dot legend is similar to the tissue legend 
+# filter the terms of intrest and plot on tissue
+map_df %>%
+  filter(MS %in% terms) %>%
+  #filter(Term %in% terms) %>%
+  {. ->> MS_df} %>%
+  enrich_modules_plot(col=.[["MS"]], title=.$Term, SM="selection", dot_scaled=FALSE) 
+
+
+# dev.new(width = 7, height = 1.3*1, noRStudioGD = TRUE) 
+#  print(n = 54, map_df)
+id <- c("P050","P044","P004","P021")
+map_df %>% filter(MS == "MS27") %>%
+  enrich_modules_plot(col=.[["MS"]], title=.$Term, SM="s", dot_scaled = FALSE) + coord_fixed(ratio = 1 )# , id=id
+
+```
+
+```{r}
+# plot all samples to have a look at which are more representative 
+# dev.new(height=12.5, width=12.5, noRStudioGD = TRUE) 
+plot_spatial.fun(
+          #DATA@misc[["vis"]][["wgcna_metacell_obj"]],
+          DATA, 
+          assay="RNA",
+          sp_annot = T,
+          sampleid = sample_id, #c("P020", "P045", "P050", "P057"),
+          geneid = "SM1",
+          lab = T,
+          alpha = 1,
+          ncol = 4,
+          #max_val = 100,
+          point_size = .5,
+          save_space = F,
+          img_alpha = 0,
+          #colors = cols, # lightgray
+          zoom = NULL )
+```
+
+
+```{r Module-Enrichment-Correlation}
+#######################
+# CORRELATION HEATMAP #
+#######################
+cur_enrich <- c("MS3", "MS12","MS16", "MS17", "MS23", "MS28", "MS37", "MS48")
+cur_enrich <- c("MS22", "MS12","MS27", "MS53")
+cur_enrich <- c("MS2","MS37","MS27","MS24","MS15","MS45", "MS53", "MS47", "MS51")
+cur_enrich <- colnames(SM.data)[-1] %>% split(., ceiling(seq_along(.)/5))
+traits <- c('L. crispatus/acidophilus','L. iners','L. jensenii',
+       'L. gasseri/johnsonii/taiwanensis','L. reuteri/oris/frumenti/antri',
+        'Gardnerella','Prevotella','Atopobium','Sneathia','Megasphaera','Streptococcus',
+        'Anaerococcus','Escherichia/Shigella','Dialister','Mycoplasma',
+        'Bifidobacterium')
+gr <- "groups"
+
+# get bacterial abundance
+bact <- datasets[["ASV_Luminal_raw_counts"]] %>% 
+   pivot_longer(-1, names_to = "ID") %>% 
+   mutate(Genus_taxa_luminal = ifelse(.$Genus_taxa_luminal %in% traits, .$Genus_taxa_luminal, "other")) %>%
+   filter(ID %in% sample_id) %>%
+   summarize(value = sum(value), .by = c("Genus_taxa_luminal", "ID")) %>%
+   {. ->> bact_count} %>%
+   group_by( ID ) %>%
+   mutate(value = value/sum(value)) %>%
+   filter(Genus_taxa_luminal %in% traits) %>%
+   pivot_wider(id_cols=ID, names_from = "Genus_taxa_luminal")
+
+bact_count <- bact_count %>% pivot_wider(id_cols=ID, names_from = "Genus_taxa_luminal")
+
+DATA <- DATA %>% 
+  select(-any_of(traits)) %>%
+  left_join(., bact, by=c( "orig.ident"="ID"))
+
+ModuleEnrichCorrelation <- function(cur_enrich, traits, gr, star = F, cor_val = T, mean_val=T){
+  # GET CORELATIONS
+  mods <- cur_enrich
+  
+  if(mean_val){
+    temp <-  DATA@meta.data[, c(cur_enrich, gr, "orig.ident", traits)]
+    temp <- summarise(temp, across(everything(), .fns = mean), .by = any_of(c("orig.ident", gr, traits)))
+    MEs <- temp[,cur_enrich]
+    trait_df <- temp[,traits]
+    meta <- temp
+  }else{
+    MEs <-  DATA@meta.data[, cur_enrich]
+    trait_df <- DATA@meta.data[, traits]
+    meta <- DATA@meta.data
+    }
+      if (length(traits == 1)) {
+          trait_df <- data.frame(x = trait_df)
+          colnames(trait_df) <- traits
+      }
+    
+  # create empty lists:
+      cor_list <- list()
+      pval_list <- list()
+      fdr_list <- list()
+      # do correlation matrix with all spots:
+      temp <- Hmisc::rcorr(as.matrix(trait_df), as.matrix(MEs), 
+          type = "spearman")
+      cur_cor <- temp$r[traits, mods]
+      cur_p <- temp$P[traits, mods]
+      p_df <- cur_p %>% reshape2::melt()
+      if (length(traits) == 1) {
+          tmp <- rep(mods, length(traits))
+          tmp <- factor(tmp, levels = mods)
+          tmp <- tmp[order(tmp)]
+          p_df$Var1 <- traits
+          p_df$Var2 <- tmp
+          rownames(p_df) <- 1:nrow(p_df)
+          p_df <- dplyr::select(p_df, c(Var1, Var2, value))
+      }
+    # save results of all spots corelations to list:
+    p_df <- p_df %>% dplyr::mutate(fdr = p.adjust(value, method = "fdr")) %>% 
+          dplyr::select(c(Var1, Var2, fdr))
+      cur_fdr <- reshape2::dcast(p_df, Var1 ~ Var2, value.var = "fdr")
+      rownames(cur_fdr) <- cur_fdr$Var1
+      cur_fdr <- cur_fdr[, -1]
+      cor_list[["all_cells"]] <- cur_cor
+      pval_list[["all_cells"]] <- cur_p
+      fdr_list[["all_cells"]] <- cur_fdr
+      trait_df <- cbind(trait_df, meta[, gr])
+      colnames(trait_df)[ncol(trait_df)] <- "group"
+      MEs <- cbind(as.data.frame(MEs), meta[, gr])
+      colnames(MEs)[ncol(MEs)] <- "group"
+    group_names <- levels(as.factor(meta[, gr]))
+        
+    trait_list <<- dplyr::group_split(trait_df, group, .keep = FALSE) %>% set_names(., group_names) %>% keep(., ~all(nrow(.x) >= 4))
+    ME_list <<- dplyr::group_split(MEs, group, .keep = FALSE) %>% set_names(., group_names) %>% keep(., ~all(nrow(.x) >= 4))
+
+      for (i in names(trait_list)) {
+          temp <- Hmisc::rcorr(as.matrix(trait_list[[i]]), as.matrix(ME_list[[i]]), type = "spearman")
+          cur_cor <- temp$r[traits, mods]
+          cur_p <- temp$P[traits, mods]
+          p_df <- cur_p %>% reshape2::melt()
+          if (length(traits) == 1) {
+              tmp <- rep(mods, length(traits))
+              tmp <- factor(tmp, levels = mods)
+              tmp <- tmp[order(tmp)]
+              p_df$Var1 <- traits
+              p_df$Var2 <- tmp
+              rownames(p_df) <- 1:nrow(p_df)
+              p_df <- dplyr::select(p_df, c(Var1, Var2, value))
+          }
+          p_df <- p_df %>% 
+            dplyr::mutate(fdr = p.adjust(value, method = "fdr")) %>% 
+            dplyr::select(c(Var1, Var2,fdr))
+          cur_fdr <- reshape2::dcast(p_df, Var1 ~ Var2, value.var = "fdr")
+          rownames(cur_fdr) <- cur_fdr$Var1
+          cur_fdr <- cur_fdr[, -1]
+          cor_list[[i]] <- cur_cor
+          pval_list[[i]] <- cur_p
+          fdr_list[[i]] <- as.matrix(cur_fdr)
+      }
+      mt_cor <- list(cor = cor_list, pval = pval_list, fdr = fdr_list)
+      #return(mt_cor)
+  
+      # PLOT CORELATIONS
+      col <- rev(c("#B2182B","#D6604D","#F4A582","#FDDBC7","#F7F7F7","#D1E5F0","#92C5DE","#4393C3","#2166AC"))
+      library("ComplexHeatmap")
+      P <- names(ME_list) %>%
+        set_names() %>%
+        imap(., ~Heatmap(na.omit(mt_cor$cor[[.x]]),
+                         #col =circlize::colorRamp2(c(1, .75, .5, .25, 0, -.25, -.5, -.75, -1), rev(col)),
+                         col =circlize::colorRamp2(c(1,.5, 0, -.5, -1),hcl_palette ="RdBu", reverse = T), 
+                         show_row_dend = F, show_column_dend = F, 
+                         column_names_side = "top", column_names_rot = 0, 
+                         name = .y,
+                         column_names_centered = T,
+                         
+                         cell_fun = stars <- function(j, i, x, y, w, h, fill) {
+                           # add value to min and max cor value:
+                                if(cor_val){
+                                  if(!is.na(mt_cor$cor[[.x]][i, j]) & mt_cor$cor[[.x]][i, j] == max(mt_cor$cor[[.x]], na.rm = T)) {
+                                    grid.text( round(max(mt_cor$cor[[.x]], na.rm = T), digits = 1), x, y)}
+                                  if(!is.na(mt_cor$cor[[.x]][i, j]) & mt_cor$cor[[.x]][i, j] == min(mt_cor$cor[[.x]], na.rm = T)) {
+                                    grid.text(round(min(mt_cor$cor[[.x]], na.rm = T), digits = 1), x, y)}
+                                  }else{NULL} 
+                           # add significans stars:
+                                if(star){
+                                  if(mt_cor$fdr[[.x]][i, j] < 0.001) {
+                                    grid.text( round(mt_cor$cor[[.x]][i, j], digits = 1), x, y)} # grid.text("***", x, y)} #star vs cor 
+                                  else if(mt_cor$fdr[[.x]][i, j] < 0.05) {
+                                    grid.text( round(mt_cor$cor[[.x]][i, j], digits = 1), x, y)} # grid.text("*", x, y)} # 
+                                  }else{NULL} }
+                         ) )
+      l <- Legend(col_fun = circlize::colorRamp2(c(1,.5, 0, -.5, -1),hcl_palette ="RdBu"),
+                  legend_height = unit(7, units = "cm"), legend_width = unit(.5, units = "cm"))
+      
+      H_grob <- map(names(ME_list), ~grid.grabExpr(draw(P[[.x]], column_title=.x, show_heatmap_legend = FALSE)) ) 
+      
+      p <- wrap_plots(c(H_grob, list(grid.grabExpr(draw(l)))), ncol = 4, heights = 4)
+    return(tibble(plot = list(p), cor_df = list(mt_cor)))
+  
+}
+# plot all enrichment modules
+p <- map(cur_enrich, ~ModuleEnrichCorrelation(.x, traits, gr="layers", cor_val = T)) %>% bind_rows()
+p$plot[[11]]
+
+cur_enrich <- c("MS2", "MS22", "MS24", "MS12", "MS53")
+cur_enrich <- c("MS37","MS37", "MS27","MS12", "MS53")
+cur_enrich <- c("SM1","SM2", "SM3","SM4")
+traits <- c("Nugent", "sexwork_months","age", "Estradiol")
+p <- ModuleEnrichCorrelation(cur_enrich, traits, gr="layers", cor_val = F, star = T, mean_val=T)
+ggsave("./Figures/03/ModuleCor_Bact.png", p$plot[[1]], width = 17, height = 15, limitsize = F, bg="white")
+ggsave("./Figures/03/EnrichCor_Bact.png", p$plot[[1]], width = 20, height = 15, limitsize = F, bg="white")
+ggsave("./Figures/03/ModuleCor_Var.png", p$plot[[1]], width = 17, height = 7, limitsize = F, bg="white")
+```
+
+```{r}
+# to double check validity of correlation
+df <- cbind(ME_list[["10"]],trait_list[["10"]], DATA %>% filter(layers == "10") %>% .[[c("orig.ident", "groups")]])
+
+  ggplot(df, aes(x=Sneathia, y=MS27, colour = groups)) +
+  
+  geom_jitter( alpha=.3) +
+    geom_boxplot(aes(group = `orig.ident`), fill= "transparent", width=0.01) 
+  
+df <- df %>% summarise(across(everything(), .fns = mean), .by = c("orig.ident", "groups")) 
+  
+temp <- Hmisc::rcorr(as.matrix(df[["Prevotella"]]), as.matrix(df[["MS27"]]))
+```
+
+```{r mantel-test}
+# NOT USED
+# seems that using spearman which is rank based is also quite appropriate for abundance data
+# We'll use the Euclidean distance for continuous variables
+env_var <- DATA %>%
+    summarise(., across(any_of(MS), .fns = mean), .by = any_of(c("orig.ident", "layers"))) %>%
+    filter(grepl(paste0(l), .$layers)) %>%
+    split(~layers, drop = T) %>%
+    map(., ~ .x %>%
+        column_to_rownames(., var = "orig.ident") %>% 
+        select(., -layers)) #%>%
+    #map(., ~dist(.x, method = "euclidean") )
+  
+
+bact_count <- column_to_rownames(bact_count,var = "ID")
+
+
+# Initialize a list to store the results
+mantel_results <- list()
+
+
+# Loop through each environmental variable and each taxon
+for (clus in names(env_var)[1]) { # names(env_var)
+  # create empty lists:
+  clus_list <- list()
+  cor_list <- list()
+  pval_list <- list()
+  taxa_list <- list()
+  fdr_list <- list()
+  for (taxon in colnames(bact_count)[1:6]) {
+    for (var in colnames(env_var[[clus]])[1:2]) {
+      
+      # Extract the vector for the current taxon
+      taxon_vector <- bact_count[, taxon]
+      
+      # Extract the vector for the current environmental variable
+      env_vector <- env_var[[clus]][, var]
+      
+      # Compute distance matrices (Euclidean distance is used for both in this case)
+      taxon_dist <- vegdist(taxon_vector, method = "bray")
+      env_dist <- dist(env_vector, method = "euclidean")
+      
+      # Perform the Mantel test
+      temp <- mantel(taxon_dist, env_dist, method = "spearman")
+      
+      # Store the results in a list with proper labeling
+      #result_label <- paste("clus:", clus, "- Taxon:", taxon, "- Env Var:", env_var)
+      #mantel_results[[result_label]] <- mantel_test
+      
+    
+      cur_cor <- temp$statistic
+      cur_p <- temp$signif
+      
+      #cur_fdr <- cur_fdr[, -1]
+      cor_list <- c(cor_list, cur_cor)
+      pval_list <- c(pval_list, cur_p)
+      taxa_list <- c(taxa_list, taxon)
+      print("hello")
+    }
+    print("test")
+    clus_list[[clus]] <- tibble("cor"= cor_list, "pval"=pval_list, "taxa"=taxa_list)
+  }
+}
+```
+
+
+```{r}
+#######################
+# CORRELATION DOTPLOT #
+#######################
+cols <- c(rep(c("#56B4E9"), 4), rep(c("#009E73"), 6), rep(c("#CC79A7"),6), rep(c("#FC8D62"),5)) %>% set_names(., sample_id)
+
+plot_cor.fun <- function(l, MS, taxa=NULL){
+  if(is.null(taxa)){taxa <- colnames(bact)[-1]}
+  # d <<- DATA %>%
+  #   mutate(gr = paste0(.$orig.ident,"_", .$layers)) %>%
+  #   DotPlot(., features=MS, group.by = 'gr', dot.min=0.1) %>%
+  #   .$data %>%
+  #   separate_wider_delim(., id, "_", names = c("id","layers")) %>%
+  #   filter(grepl(paste0(l), .$layers)) %>%
+  #   left_join(., select(bact,ID,any_of(taxa)), by=c( "id"="ID")) %>%
+  #   pivot_longer(cols = -c(1:6)) %>%
+  #   split(~layers) %>%
+  #   map(., ~mutate(.x, txt = ifelse(value > 0.05, .$id, NA)))
+    
+  d <<- DATA %>%
+    summarise(., across(any_of(MS), .fns = mean), .by = any_of(c("orig.ident", "layers"))) %>%
+    filter(grepl(paste0(l), .$layers)) %>%
+    left_join(., select(bact,ID,any_of(taxa)), by=c( "orig.ident"="ID")) %>%
+    #left_join(., bact, by=c( "id"="ID")) %>%
+    pivot_longer(cols = any_of(MS), names_to = "features.plot", values_to = "avg.exp") %>%
+    pivot_longer(cols = any_of(taxa)) %>%
+    mutate(name = factor(name, levels = taxa)) %>%
+    split(~layers, drop = T) %>%
+    map(., ~mutate(.x, txt = ifelse(value > 0.05, .$orig.ident, NA)))
+  
+  p <- imap(d, ~ggplot(.x, aes(x=value, y=avg.exp)) + 
+      stat_cor( aes(x=value, y=avg.exp), method = "spearman",
+                show.legend = F, label.x = .3, size=4) +
+      geom_point( aes( col=orig.ident), show.legend = F, size=4) + # size=pct.exp,
+      geom_text(aes(label= txt), colour = "gray60", size=5, vjust = -0.8) +
+      theme_minimal() + coord_cartesian(clip = "off") + 
+      scale_colour_manual(values = cols) +  # limits = c(0,2),oob = scales::squish
+      ggtitle(.y)+
+      theme(axis.text = element_text(size=rel(1) ),
+            title = element_text(size=16 ),
+            strip.text.x = element_text(size=14),
+            panel.spacing.x = unit(1, "lines"),
+            axis.title.x = element_blank(), plot.margin = unit(c(.2,1,0,.2), "lines") ) +
+      facet_wrap(~name, ncol = 4) +
+      scale_x_continuous(labels = scales::percent)
+      #scale_x_continuous(sec.axis = sec_axis(~ . , name = .y, breaks = NULL, labels = NULL)) 
+      )
+  return(p)
+}
+
+# cur_enrich <- c("MS2", "MS22", "MS24", "MS12", "MS53")
+cur_enrich <- c("MS2","MS37","MS27","MS24", "MS53", "MS47", "MS51")
+cur_enrich <- c("MS15", "MS45")
+
+cur_enrich <- c("MS12")
+epi <- "Superficial|Basal|Upper IM|Lower IM"
+sub <- "Basal|^1$|^2$|^10$"
+
+taxa <- c("L. crispatus/acidophilus","Gardnerella", "Prevotella", "Atopobium") # , "L. gasseri/johnsonii/taiwanensis"
+taxa <- c("L. iners","Gardnerella", "Prevotella", "Atopobium") # , "L. gasseri/johnsonii/taiwanensis"
+p <- plot_cor.fun(l=sub, MS=cur_enrich, taxa=taxa)
+pdf("./Figures/03/Corelation_dotplot_MS12.pdf", width = 17, height = 4*1)
+p
+dev.off()
+
+
+###########################
+# VIOLIN PLOT ENRICH DEGs #
+###########################
+#  print(n = 54, map_df)
+t <- map_df %>% filter(MS %in% cur_enrich) 
+f <- t$Genes[[7]]
+f <- c("LRP1","TIMP2","TIMP3","TIMP1","RECK")
+DAT <- DATA %>%
+  filter((grepl("^1$|^4$|^0$|^3$|^2$|^10$", .$Clusters))) %>%
+  #filter((grepl("^5$|^6$|7|8", .$Clusters))) %>%
+  mutate(., FetchData(., vars = c(f)) ) %>%
+  #violin.fun(., feature=f,facet="layers", group.by = "groups") 
+  violin.fun(., feature=f,facet="feature", group.by = "groups") 
+  VlnPlot(., features = f, ncol = 6, group.by = "groups")
+ 
+
+```
+
+
+```{r Taxa-plot}
+##################
+# TAXA AREA PLOT #
+##################
+#### colour pallet ####
+cols <- c( "#A8EDFC","#A8EDFC","#A8EDFC","#87c7c0","#a9e7e4","#c2ebe2","#7fe2e9","#7fe2e9","#83dafb","#83dafb",# 
+           "#be6a7d","#f1a6b1","#E3E6AD","#F8D0A4","#c4ce96","#9aacce","#e1caff","#abc5bf",
+           "#ffffd4","#c0a2c1","#c8ffd5","#c8ffd5","#afb7ee","#ffc8d9","#ffc8d9","#e7b993","#c8ffd5",
+           "#c4cea9","#a1b37d","#a6cca7","#d1b9ee","#88c29c",
+           "#fdcc8a","#91c6f7","#f5f8bd","#8db1c5","#fab0aa","#7cb6b6","#96f3eb","#6ececc")
+n <- c('L. crispatus','L. acidophilus','L. crispatus/acidophilus','L. iners','L. other','L. jensenii','L. johnsonii',
+       'L. gasseri/johnsonii/taiwanensis','L. reuteri', 'L. reuteri/oris/frumenti/antri',
+       'Gardnerella','Prevotella','Atopobium','Sneathia','Megasphaera','Streptococcus',
+       'Anaerococcus','Dialister','Mycoplasma','Bifidobacterium', 'Klebsiella', 'Citrobacter/Klebsiella',
+       'Escherichia','Escherichia/Shigella', 'other')
+cols <- set_names(c(cols[1:length(n)-1], "gray90"), n)
+
+#### get taxa df ####
+# order samples by percentage of gardnerella
+factor.fun <- function(df, type="stack"){
+  l <- c("L1"="L. crispatus/acidophilus", "L2"="L. jensenii", "L3"="L. iners", "L4"="Gardnerella")
+  if(type=="identity"){l <- c("L1"="L. crispatus/acidophilus", "L2"="L. iners", 
+                              "L3"="Gardnerella", "L4"="Gardnerella")}
+  imap(l, ~filter(df, gr==.y & taxa==.x) %>% 
+               arrange(., desc(Percent)) %>% pull(., "name") ) %>%
+        unlist()}
+
+df <- datasets$ASV_Luminal_raw_counts %>% 
+  pivot_longer(cols = -Genus_taxa_luminal) %>%
+  filter(name %in% sample_id) %>%
+  left_join(., select(meta, name="ID", gr="Luminal_gr_v3"), by="name") %>%
+  mutate(taxa = ifelse(.$Genus_taxa_luminal %in% n, .$Genus_taxa_luminal, "other")) %>%
+  mutate(taxa = factor(taxa, levels = n)) %>%
+  group_by( name ) %>%
+  mutate(Percent = value/sum(value)) %>%
+  mutate(name = factor(name, levels = factor.fun(.)))
+
+# check if percentages add up to one
+group_by(df, name) %>% summarize(total_percent = sum(Percent)) 
+d <- group_by(df, taxa, name) %>% summarize(total_percent = sum(Percent)) 
+
+
+#### one order ####
+ggplot(df, aes(x=name, y=Percent, group=taxa, fill=taxa)) +
+  geom_area(position = "fill") + 
+  # geom_area(alpha=1, position = "identity") + # overlaping vs stacked 
+  scale_color_manual(values = cols, aesthetics = c("color", "fill")) + theme_classic() +
+  scale_y_continuous(labels = scales::percent) +
+  theme(axis.text.x = element_text(angle = 30, hjust = 1), axis.title = element_blank(), legend.title = element_blank()) 
+ggsave(filename=paste0("./Figures/02/", "Taxa_area_contineous.png"),  width = 7, height = 5, bg = "white")
+
+##### order individually by luminal groups ####
+taxa_plot.fun <- function(type){
+  if(type=="identity"){col <- "Percent"}else{col <- "value"}
+  
+  # create individual dfs for each group, in order to order taxa for each separately:
+  d <- df %>% 
+    {if(type=="identity") mutate(., name = factor(name, levels = factor.fun(., type="identity"))) else .} %>%
+    split(~gr) %>% 
+    map(., ~ .x %>%
+          arrange(., desc(Percent)) %>%
+          mutate(., taxa = factor(taxa, levels=unique(.$taxa))) ) 
+  # check resulting taxa levels
+  d %>% map(., ~levels(.x$taxa)) 
+  
+  ggplot() + 
+    geom_area(data = d$L1, aes(x=name, y=.data[[col]], group=taxa, fill=taxa), position = type) +
+    geom_area(data = d$L2, aes(x=name, y=.data[[col]], group=taxa, fill=taxa), position = type) +
+    geom_area(data = d$L3, aes(x=name, y=.data[[col]], group=taxa, fill=taxa), position = type) +
+    geom_area(data = d$L4, aes(x=name, y=.data[[col]], group=taxa, fill=taxa), position = type) +
+    
+    #{if(type=="identity") 
+    #  geom_line(data = df, aes(x=name, y=.data[[col]], group=taxa), color="white", size=.2)} + 
+    scale_color_manual(values = cols, aesthetics = c("color", "fill") ) + theme_classic() +
+    scale_y_continuous(labels = scales::percent) + 
+    theme(axis.text.x = element_text(angle = 30, hjust = 1), 
+          axis.title = element_blank(), legend.title = element_blank()) #legend.position=c(.9,.74),
+}
+
+taxa_plot.fun(type = "identity")
+taxa_plot.fun(type = "fill")
+
+ggsave(filename=paste0("./Figures/02/", "Taxa_area_plot_overlap.png"), width = 7.5, height = 5, bg = "white")
+ggsave(filename=paste0("./Figures/02/", "Taxa_area_plot_stacked.png"),  width = 7.5, height = 5, bg = "white")
+
+```
+
+
+```{r Enrichment-plot}
+#######################
+# ENRICHMENT BARPLOT #
+#######################
+overlap.fun <- function(string){
+  l <- str_split(string, pattern ="/")
+  l <- map_dbl(l, ~as.numeric(.x[1])/as.numeric(.x[2]) )
+  return(l)}
+
+# str_match("cytoplasmic translation (GO:0002181)", "^(.+?)\\s\\((.+)\\)$")[2]
+GeneRatio_plot.fun <- function(enrich_df, txt_size = 15, nr_path=3,
+                               col=c("#ed968c","#f9d14a","#88a0dc","#e78429")){
+  dot_df <- enrich_df %>%  # dot_df <- enrich_df$GO_Biological_Process_2021 %>%
+    {if(grepl("GO",.$Term[[1]])){mutate(., "Term" = str_match(.$Term, "^(.+?)\\s\\((.+)\\)$")[,2], 
+           "GOid" = str_match(.$Term, "^(.+?)\\s\\((.+)\\)$")[,3] )}else .} %>%
+    filter(Adjusted.P.value < 0.05) %>%
+    mutate("-log10(P-value)" = -log10(P.value)) %>%
+    mutate(GeneRatio = overlap.fun(.$Overlap)*100) 
+  
+  dot_df <- dot_df %>%
+    group_by(module) %>% 
+    top_n(., -nr_path, Adjusted.P.value) 
+  
+  p <- ggplot(dot_df, aes(x = `-log10(P-value)`, y = fct_reorder(Term, `-log10(P-value)`), fill = module, col = module)) +
+    geom_col(width = .05, show.legend = F) +
+    geom_point(aes(size = GeneRatio)) + theme_classic() + 
+    scale_fill_manual(values = col, aesthetics = c("fill", "colour")) +
+    
+    facet_wrap(~module, scales = 'free', ncol = 1) +
+    #scale_x_continuous(expand = c(0, 1.5)) +
+    coord_cartesian(clip = F) +
+    scale_x_continuous(limits = function(x){c(0, +max(0.1, x))}) +
+    scale_size_continuous(breaks = c(10, 50, 80)) +
+    theme(axis.title.y = element_blank(),
+          strip.text.x = element_text(hjust = 0.1, margin=margin(l=0)),
+          strip.background = element_blank(),
+          panel.spacing = unit(0, "cm"),
+          panel.border = element_blank())
+  return(p)
+}
+
+
+p1 <- GeneRatio_plot.fun(enrich_df$Transcription_Factor_PPIs)
+p2 <- GeneRatio_plot.fun(enrich_df$GO_Biological_Process_2021)
+p3 <- GeneRatio_plot.fun(enrich_df$KEGG_2021_Human)
+p <- wrap_plots(p1, p2, p3, ncol = 3, guides = "collect") 
+
+ggsave(paste0("./Manuscript/Figures/03/", "Enrichment.png"),p,  width = 11, height = 3, bg = "white")
+```
+
+
+```{r visulization-functions}
+#######################
+# LINE PLOT PER LAYER #
+#######################
+layer_lines.fun <- function(DATA, feat, spatial_dist, facet = F, line = "mean", x_max=NULL, morf="epi", clus="^5$|^6$|^7|^8"){
+  DAT <- DATA %>%
+    filter(., grepl(morf, .$sp_annot)) %>%
+    filter(., grepl(clus, .$Clusters)) %>%
+    mutate(., FetchData(., vars = c(feat)) ) %>%
+    select(orig.ident, groups, layers, all_of(c(feat)), {{spatial_dist}})
+  
+  if(morf=="epi"){probs <- c(0.179, 0.9025)}else{probs <- c(0.13, 0.78)}
+  
+    rects <- DAT %>%
+    group_by(layers) %>%
+    summarise(., ystart=min({{spatial_dist}}, na.rm=T), yend=max({{spatial_dist}}, na.rm=T),
+              Q1=quantile({{spatial_dist}}, probs = probs[1], na.rm=T),
+              Q3=quantile({{spatial_dist}}, probs = probs[2], na.rm=T)) %>%
+    filter(!(is.infinite(.$ystart))) %>%
+    mutate(Q1 = ifelse(.$Q1 == min(.$Q1), 0,.$Q1)) %>%
+    mutate(Q3 = ifelse(.$Q3 == max(.$Q3), max(.$yend),.$Q3)) %>%
+    mutate(Q1 = ifelse(.$layers == "4", .$Q1+10,.$Q1)) %>%
+    mutate(Q1 = ifelse(.$layers == "0", .$Q1-.6,.$Q1)) %>%
+    mutate(Q1 = ifelse(.$layers == "Lower IM", .$Q1-.7,.$Q1)) %>%
+    mutate(Q3 = ifelse(.$layers == "Upper IM", .$Q3+.95,.$Q3)) %>%
+    mutate(Q1 = ifelse(.$layers == "10", .$Q1+.5,.$Q1)) %>%
+      {. ->> rect_df} %>%
+    arrange(ystart) %>% ungroup()
+        
+    gr <- c( "#56B4E9","#009E73","#CC79A7","#FC8D62")
+    mean <- DAT %>%
+      #group_by(groups, layers) %>%
+      summarize(mean = mean(.data[[feat]]), median = median(.data[[feat]]), .by = c("groups", "layers")) %>%
+      left_join(rects, mean, by = c("layers")) 
+
+  if(facet == TRUE){facets <- facet_wrap(~groups, ncol = 2) }else{facets <- NULL}
+  
+  dot <- ggplot() +
+    #ggtitle(feature) +
+    geom_rect(data = rects, alpha = 0.1, show.legend=FALSE,
+              aes(xmin = -Inf, xmax = Inf, ymin = Q1, ymax = Q3, fill = layers)) +
+    #geom_jitter(data = DAT, aes(x=.data[[feat]], y={{spatial_dist}}, col=layers), 
+    #            width = 0.1, alpha = 0.7, size=.3) + 
+    scale_fill_manual(values = col) + 
+    
+    #ggnewscale::new_scale_fill() +
+    {if(!(is.null(line))){geom_segment(data=mean, aes(x=.data[[line]], y=Q1, xend=.data[[line]], yend=Q3, col=groups))}} +
+    scale_colour_manual(values = gr) +
+    # geom_smooth(data = filter(DAT, .data[[feat]] != 0), n=1000, aes(y={{spatial_dist}}, x=.data[[feat]], col=orig.ident)) + 
+    guides(fill = guide_legend(override.aes = list(size=1), keyheight = .1, keywidth = .7)) + #, keyheight = .7,
+    
+
+    {if(!(is.null(x_max))){xlim(-.5, x_max)}} +
+    facets + 
+    
+    #scale_y_reverse(expand = c(0, 0)) +
+    scale_y_continuous(expand = c(0, 0)) +
+    coord_flip() + 
+    
+    my_theme +
+    theme(plot.margin = unit(c(.2,0,0,.2), "lines"),
+          #legend.box.margin=margin(0,0,0,0),
+          legend.key.spacing.y = unit(-8, "pt"),
+          axis.title.x = element_blank(),
+          legend.margin=margin(0,0,0,-5),
+          panel.border = element_blank(),
+          axis.line = element_line(),
+          panel.grid.major = element_line(linewidth = 0.2),
+          panel.grid.minor = element_line(linewidth = 0.1))
+  return(dot)
+}
+
+#####################
+# DOTPLOT PER LAYER #
+#####################
+layer_dotplot.fun <- function(DATA, feat, spatial_dist, facet = TRUE, line = "mean", x_max=NULL, morf="epi", clus="^5$|^6$|^7|^8"){
+  DAT <- DATA %>%
+    filter(., grepl(morf, .$sp_annot)) %>%
+    filter(., grepl(clus, .$Clusters)) %>%
+    mutate(., FetchData(., vars = c(feat)) ) %>%
+    select(orig.ident, groups, layers, all_of(c(feat)), {{spatial_dist}})
+  
+  if(morf=="epi"){probs <- c(0.179, 0.9025)}else{probs <- c(0.13, 0.78)}
+  
+    rects <- DAT %>%
+    group_by(layers) %>%
+    summarise(., ystart=min({{spatial_dist}}, na.rm=T), yend=max({{spatial_dist}}, na.rm=T),
+              Q1=quantile({{spatial_dist}}, probs = probs[1], na.rm=T),
+              Q3=quantile({{spatial_dist}}, probs = probs[2], na.rm=T)) %>%
+    filter(!(is.infinite(.$ystart))) %>%
+    mutate(Q1 = ifelse(.$Q1 == min(.$Q1), 0,.$Q1)) %>%
+    mutate(Q3 = ifelse(.$Q3 == max(.$Q3), max(.$yend),.$Q3)) %>%
+    mutate(Q1 = ifelse(.$layers == "4", .$Q1+10,.$Q1)) %>%
+    mutate(Q1 = ifelse(.$layers == "0", .$Q1-.6,.$Q1)) %>%
+    mutate(Q1 = ifelse(.$layers == "Lower IM", .$Q1-.7,.$Q1)) %>%
+    mutate(Q3 = ifelse(.$layers == "Upper IM", .$Q3+.95,.$Q3)) %>%
+    mutate(Q1 = ifelse(.$layers == "10", .$Q1+.5,.$Q1)) %>%
+      {. ->> rect_df} %>%
+    arrange(ystart) %>% ungroup()
+        
+    mean <- DAT %>%
+      #group_by(groups, layers) %>%
+      summarize(mean = mean(.data[[feat]]), median = median(.data[[feat]]), .by = c("groups", "layers")) %>%
+      left_join(rects, mean, by = c("layers")) 
+
+  if(facet == TRUE){facets <- facet_wrap(~groups, ncol = 2) }else{facets <- NULL}
+  
+  dot <- ggplot() +
+    #ggtitle(feature) +
+    geom_rect(data = rects, alpha = 0.1, show.legend=FALSE,
+              aes(xmin = -Inf, xmax = Inf, ymin = Q1, ymax = Q3, fill = layers)) +
+    geom_jitter(data = DAT, aes(x=.data[[feat]], y={{spatial_dist}}, col=layers), 
+                width = 0.1, alpha = 0.7, size=.3) + 
+    #geom_vline(data=mean, aes(xintercept=mean, col=layers)) +
+    {if(!(is.null(line))){geom_segment(data=mean, aes(x=.data[[line]], y=Q1, xend=.data[[line]], yend=Q3, col=layers))}} +
+    scale_fill_manual(values = col) + 
+    scale_colour_manual(values = col) +
+    # geom_smooth(data = filter(DAT, .data[[feat]] != 0), n=1000, aes(y={{spatial_dist}}, x=.data[[feat]], col=orig.ident)) + 
+    guides(fill = guide_legend(override.aes = list(size=2), keyheight = .7, keywidth = .7)) +
+    scale_y_reverse(expand = c(0, 0)) +
+    #scale_x_continuous(expand = c(0, 0)) +
+    {if(!(is.null(x_max))){xlim(-.5, x_max)}} +
+    facets +
+    my_theme + ylab("Similarity in gene expression") +
+    theme(plot.margin = unit(c(0,.2,0,.2), "lines"),
+          #legend.box.margin=margin(0,0,0,0),
+          legend.margin=margin(0,0,0,-5),
+          panel.spacing = unit(0, "cm"),
+          panel.border = element_blank(),
+          axis.line = element_line(),
+          panel.grid.major = element_line(linewidth = 0.2),
+          panel.grid.minor = element_line(linewidth = 0.1))
+  return(dot)
+}
+```
+
+### Plot condition diff gene expression as dotplot and on tissue
+```{r 08c_combined_dot_and_tissue_plot, fig.height=6, fig.width=6.75}
+#####################
+# EPITHELIUM PLOTS #
+#####################
+genes <- c("MMP11")
+col <- c("#E41A1C","#FF7F00","#C77CFF","#984EA3")
+dot_epi <- map(genes, ~layer_dotplot.fun(DATA, .x, sp_dist_epi))
+line_epi <- map(genes, ~layer_lines.fun(DATA, .x, sp_dist_epi))
+wrap_plots(c(dot_epi, line_epi), ncol = 1, heights = c(1, .25))
+
+#####################
+# SUBMUCOSA PLOTS #
+#####################
+col <- c("#984EA3","#00A9FF","#377EB8","#CD9600","#e0e067","#7CAE00","#FF61CC","#FF9DA7","#999999","#A65628")
+genes <- c("REV3L")
+dot_sub <- map(genes, ~layer_dotplot.fun(DATA, .x, sp_dist_SubMuc, morf="SubMuc", line="mean", clus="8|^1$|^4$|^0|^3|^2|9|^10$|^11$|^12$"))
+line_sub <- map(genes, ~layer_lines.fun(DATA, .x, sp_dist_SubMuc, morf="SubMuc", line="mean", clus="8|^1$|^4$|^0|^3|^2|9|^10$|^11$|^12$"))
+wrap_plots(c(dot_sub, line_sub), ncol = 1, heights = c(1, .25))
+```
+
+```{r}
+############################
+# COND EXPRESION ON TISSUE #
+############################
+# col <- RColorBrewer::brewer.pal(9,"PuRd")
+# col <-  c("grey95", RColorBrewer::brewer.pal(9,"Reds"))
+# col <- c("grey100","grey95", "mistyrose", "red", "dark red", "#870808", "black")
+# col <- RColorBrewer::brewer.pal(9,"Purples")
+col <- c("#EFEDF5", "#DADAEB", "#BCBDDC", "#9E9AC8", "#807DBA", "#6A51A3", "#54278F", "#3F007D") # Purples
+
+cond_epi_DEGs <- c("SAMD9", "GPRC5A", "TGM3", "KRT19", "PKP1")
+tissue_epi <- map(cond_epi_DEGs, 
+        ~plot_st_feat.fun( DATA,orig.ident = 
+                           geneid = .x,
+                           zoom = "zoom",
+                           col = col,
+                           alpha = .9,
+                           ncol = 4, 
+                           annot_line = .1,
+                           img_alpha = 0,
+                           point_size = .75)) 
+
+tissue_sub <- map(cond_SubMuc_DEGs, 
+        ~plot_st_feat.fun( DATA,
+                           geneid = .x,
+                           zoom = "zoom",
+                           col = col,
+                           alpha = .9,
+                           ncol = 4, 
+                           annot_line = .1,
+                           img_alpha = 0,
+                           point_size = .75)) 
+
+```
+

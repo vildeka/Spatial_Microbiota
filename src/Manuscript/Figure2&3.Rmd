@@ -1,0 +1,680 @@
+---
+title: "Figure 2 & 3"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+format:
+  html:
+    embed-resources: true
+    code-fold: show
+params:
+  fig.path: "`r paste0(params$fig.path)`" #./Figures/
+editor_options: 
+  chunk_output_type: console
+---
+## Heatmap of significant genes per cluster
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  fig.width     = 6.6929133858,
+  fig.path      = params$fig.path,#"../Figures/",
+  fig.align     = "center",
+  message       = FALSE,
+  warning       = FALSE,
+  dev           = c("png"),
+  dpi           = 300,
+  fig.process = function(filename){
+    new_filename <- stringr::str_remove(string = filename,
+                                        pattern = "-1")
+    fs::file_move(path = filename, new_path = new_filename)
+    ifelse(fs::file_exists(new_filename), new_filename, filename)
+  }
+  )
+#  setwd("~/work/Brolidens_work/Projects/Spatial_Microbiota/src/Manuscript")
+```
+
+```{r background_job, eval=FALSE, include=FALSE}
+source("../../bin/render_with_jobs.R")
+
+# quarto
+# render_html_with_job(out_dir = lab_dir)
+# fs::file_move(path = file, new_path = paste0(lab_dir, file))
+
+# currently using quarto for github and kniter for html due to source code option 
+render_git_with_job(fig_path = "./Figures/02&03/")
+system2(command = "sed", stdout = TRUE,
+        args = c("-i", "''","-e", 's/src=\\"\\./src=\\"\\.\\./g',
+                 paste0("./md_files/", basename("./07_figures.md"))))
+
+# kniter
+knit_html_with_job(out_dir = "../lab_book/figure_07", fig_path = "./Figures/07/")
+```
+
+### Load data and libraries
+```{r Load_data}
+##################
+# LOAD LIBRARIES #
+##################
+library(tidyverse)
+library(Seurat)
+library(SeuratObject)
+library(tidyseurat)
+library(cowplot)
+library(patchwork)
+library(openxlsx)
+
+source("../../bin/spatial_visualization.R")
+source("../../bin/plotting_functions.R")
+
+#########
+# PATHS #
+#########
+input_dir <- "../../results/06_DGE_condition_st_data/"
+result_dir <- "./Figures/02&03/"
+if( isFALSE(dir.exists(result_dir)) ) { dir.create(result_dir,recursive = TRUE) }
+epi_clus <- "^5$|^6$|^7|^8" # res 0.75
+# epi_clus <- "^11$|^6$|^7|^9" # res 1.0
+
+ord <- c("Superficial", "Upper IM", "Lower IM", "Basal","1","4","0","3","2","9","10","11","12")
+ord1 <- c("5", "6", "7", "8","1","4","0","3","2","9","10","11","12")
+sample_id <- c("P020", "P045", "P050", "P057",
+               "P008", "P031", "P080", "P044", "P026", "P105", 
+               "P001", "P004", "P014", "P018", "P087", "P118",
+               "P021", "P024", "P067", "P081", "P117" ) %>% set_names()
+
+#############
+# LOAD DATA #
+#############
+DATA <- readRDS(paste0("../../results/03_clustering_st_data/","seuratObj_clustered.RDS"))
+DEGs_table <- read_csv(paste0(input_dir,"DGEs_condition_wilcox.0.7.csv"))
+pseudo_DEGs <- readRDS(paste0(input_dir,"Pseudobulk_across_DEGs.RDS"))
+#DATA <- readRDS(paste0(input_dir,"seuratObj_spatial_dist_SM.RDS"))
+
+```
+
+```{r}
+D <- DEGs_table %>%
+  filter(., p_val_adj < 0.05) %>%
+  filter(., !(grepl("0|^3|9|10|11|12", .$subgroup))) %>%
+  filter(., cluster == "L4") %>%
+  mutate(sp_annot = ifelse(grepl("\\d", .$layers), "SubMuc", "epi")) %>%
+  split(~sp_annot) 
+```
+
+```{r Venn-diagram-DEGs}
+##########################
+# COMPUTE STATS FOR DEGs #
+##########################
+# Find intersections for each layer
+int.fun <- function(df){
+  g_lists <- df %>% # g_lists <- DEGs_nest$data[[1]] %>%
+    filter(p_val_adj < 0.05) %>%
+    split(~comb) %>%
+    map(., ~pull(.x, "gene"))
+  
+  int <- Reduce(intersect, g_lists )
+  return(int)
+}
+
+DEGs_nest <- DEGs_table %>%
+  filter(!(grepl("11|$^12$", .$layers))) %>%
+  arrange(layers) %>%
+  filter(p_val_adj < 0.05) %>% 
+  nest(data = -c("comb", "layers")) %>%
+  mutate(#UP = map_int(data, ~ nrow(filter(.x, p_val_adj <= 0.05 & avg_log2FC > 0))),
+         #DOWN = map_int(data, ~ nrow(filter(.x, p_val_adj <= 0.05 & avg_log2FC < 0))),
+         n = map_int(data, ~ nrow(.x)) ) %>%
+  select(-data) %>%
+  pivot_wider(., names_from = comb, values_from = n)
+
+comp <- unique(DEGs_table$comb)
+DEGs_nest <- DEGs_table %>%
+  filter(!(grepl("11|$^12$", .$layers))) %>%
+  arrange(layers) %>%
+  #filter(p_val_adj < 0.05) %>% 
+  filter(p_val < 0.001) %>% 
+  #group_by(Regulation) %>%
+  nest(data = -layers) %>%
+  mutate(pval.0.001 = map_int(data, ~ nrow(filter(.x, p_val <= 0.001))),
+         FDR.0.05 = map_int(data, ~ nrow(filter(.x, p_val_adj <= 0.05))),
+         UP = map_int(data, ~ nrow(filter(.x, p_val_adj <= 0.05 & avg_log2FC > 0))),
+         DOWN = map_int(data, ~ nrow(filter(.x, p_val_adj <= 0.05 & avg_log2FC < 0)))) %>%
+  left_join(., DEGs_nest) #%>%
+  #mutate(intersection = map(data, ~int.fun(.x)))
+
+DEGs_nest
+
+
+# Number of DEGs
+WILK <- DEGs_table %>%
+  filter(!(grepl("11|$^12$|^9", .$layers))) %>%
+  filter(p_val_adj < 0.05) %>% .$gene %>% unique()
+
+PAIR <- pseudo_DEGs %>%
+  select(pairwise) %>% unnest(cols = c(pairwise)) %>% filter(FDR < 0.05) %>% .$Genes %>% unique()
+
+ACK <- pseudo_DEGs %>%
+  select(across) %>% unnest(cols = c(across)) %>% filter(FDR < 0.05) %>% .$symbol %>% unique()
+
+setdiff(PAIR, WILK)
+intersect(intersect(PAIR, WILK), ACK)
+
+all_DEGs <- c(PAIR, WILK, ACK) %>% unique()
+
+#####################
+# PLOT VENN DIAGRAM #
+#####################
+library(RColorBrewer)
+myCol <- brewer.pal(3, "Pastel2")
+myCol <- rep("#FFFFFF", 3)
+
+# Chart
+library(VennDiagram)
+venn <- venn.diagram(
+        x = list(WILK, PAIR, ACK),
+        category.names = c("Wilcox" , "Pairwise" , "Across"),
+        filename = 'venn_diagramm.png',
+        output=FALSE,
+        
+        # Output features
+        imagetype="tiff" ,
+        height = 480 , 
+        width = 480 , 
+        resolution = 300,
+        compression = "lzw",
+        
+        # Circles
+        lwd = .3,
+        lty = 'solid',
+        fill = myCol,
+        
+        # Numbers
+        cex = .65,
+        fontface = "plain",
+        fontfamily = "sans",
+        
+        # Set names
+        cat.cex = 0.7,
+        cat.fontface = "plain",
+        cat.default.pos = "outer",
+        cat.pos = c(-33, 33, 180),
+        cat.dist = c(0.095, 0.105, 0.05),
+        cat.fontfamily = "sans",
+        margin = c(.06), #unit(c(-2.5, -1, -2, -1), "lines")
+        rotation = 1
+)
+p <- ggdraw() + draw_image("./venn_diagramm.png")
+plot_grid(p, labels = c("A"))
+```
+
+```{r Number-of-UP-and-DOWN-DEGs}
+#########################
+# FACET COLOUR FUNCTION #
+#########################
+modify_facet_appearance <- function(plot = NULL,
+                                    strip.background.x.fill = NULL, 
+                                    strip.background.y.fill = NULL,
+                                    strip.background.x.col = NULL,
+                                    strip.background.y.col = NULL,
+                                    strip.text.x.col = NULL,
+                                    strip.text.y.col = NULL){
+  
+  if(is.null(plot)){stop("A ggplot (gg class) needs to be provided!")}
+  
+  # Generate gtable object to modify the facet strips:
+  #g <- ggplot_gtable(ggplot_build(plot))
+  #g <- ggplotGrob(plot)
+  g <- as_gtable(plot)
+  
+  # Get the locations of the right and top facets in g:
+  stripy <- which(grepl('strip-r|strip-l', g$layout$name)) # account for when strip positions are switched r-l and/or t-b in facet_grid(switch = )
+  stripx <- which(grepl('strip-t|strip-b', g$layout$name))
+  
+  # Check that the provided value arrays have the same length as strips the plot has:
+  lx <- c(length(strip.background.x.fill), length(strip.background.x.col), length(strip.text.x.col))
+  if(!all(lx==length(stripx) | lx==0)){stop("The provided vectors with values need to have the same length and the number of facets in the plot!")}
+  ly <- c(length(strip.background.y.fill), length(strip.background.y.col), length(strip.text.y.col))
+  if(!all(ly==length(stripy) | ly==0)){stop("The provided vectors with values need to have the same length and the number of facets in the plot!")}
+  
+  # Change the strips on the y axis:
+  for (i in seq_along(stripy)){ # if no strips in the right, the loop will not be executed as seq_along(stripy) will be integer(0)
+    
+    # Change strip fill and (border) colour :
+    j1 <- which(grepl('strip.background.y', g$grobs[[stripy[i]]]$grobs[[1]]$childrenOrder))
+    if(!is.null(strip.background.y.fill[i])){g$grobs[[stripy[i]]]$grobs[[1]]$children[[j1]]$gp$fill <- strip.background.y.fill[i]} # fill
+    if(!is.null(strip.background.y.col[i])){g$grobs[[stripy[i]]]$grobs[[1]]$children[[j1]]$gp$col <- strip.background.y.col[i]} # border colour
+    
+    # Change color of text:
+    j2 <- which(grepl('strip.text.y', g$grobs[[stripy[i]]]$grobs[[1]]$childrenOrder))
+    if(!is.null(strip.text.y.col[i])){g$grobs[[stripy[i]]]$grobs[[1]]$children[[j2]]$children[[1]]$gp$col <- strip.text.y.col[i]}
+
+  }
+  
+  # Same but for the x axis:
+  for (i in seq_along(stripx)){
+    
+    # Change strip fill and (border) colour :
+    j1 <- which(grepl('strip.background.x', g$grobs[[stripx[i]]]$grobs[[1]]$childrenOrder))
+    if(!is.null(strip.background.x.fill[i])){g$grobs[[stripx[i]]]$grobs[[1]]$children[[j1]]$gp$fill <- strip.background.x.fill[i]} # fill
+    if(!is.null(strip.background.x.col[i])){g$grobs[[stripx[i]]]$grobs[[1]]$children[[j1]]$gp$col <- strip.background.x.col[i]} # border colour
+    
+    # Change color of text:
+    j2 <- which(grepl('strip.text.x', g$grobs[[stripx[i]]]$grobs[[1]]$childrenOrder))
+    if(!is.null(strip.text.x.col[i])){g$grobs[[stripx[i]]]$grobs[[1]]$children[[j2]]$children[[1]]$gp$col <- strip.text.x.col[i]}
+
+  }
+  
+  return(g) 
+  
+  # Note that it returns a gtable object. This can be ploted with plot() or grid::draw.grid(). 
+  # patchwork can handle the addition of such gtable to a layout with other ggplot objects, 
+  # but be sure to use patchwork::wrap_ggplot_grob(g) for proper alignment of plots!
+  # See: https://patchwork.data-imaginist.com/reference/wrap_ggplot_grob.html
+  
+}
+
+#############################
+# NUMBER OF SIGNIFICANT DEGS #
+#############################
+clus_col <- c("#E41A1C","#FF7F00","#C77CFF","#984EA3","#00A9FF","#377EB8","#CD9600","#7CAE00","#e0e067","#FF61CC","#FF9DA7","#999999","#A65628")
+clus_col <- set_names(clus_col, ord)
+
+c <- c("L1-L2", "L1-L3", "L2-L3", "L1-L4", "L2-L4", "L3-L4")
+regx <- c("\\w", "\\d")
+sum <- DEGs_table %>%
+  filter(., p_val_adj < 0.05) %>%
+  filter(., !(grepl("9|11|12", .$subgroup))) %>%
+  mutate(sp_annot = ifelse(grepl("\\d", .$layers), "SubMuc", "epi")) %>%
+  split(~sp_annot) %>%
+  
+  map(., ~ .x %>%
+      summarise(genes = n(), .by = c("comb", "Regulation", "layers", "subgroup")) %>% 
+      mutate(genes = ifelse(Regulation == "DOWN", -(.$genes), (.$genes))) %>%
+      mutate(layers = factor(.$layers, levels = ord)) %>%
+      #mutate(layers = factor(.$subgroup, levels = ord1)) %>%
+      mutate(comb = factor(.$comb, levels = rev(c)))
+)
+
+# dev.new(width=5, height=4, noRStudioGD = TRUE) 
+A <- imap(sum, ~ {ggplot(data = .x) +
+  geom_col(aes(x = genes, y = comb, fill = Regulation)) +
+  #coord_flip() + 
+  scale_fill_manual(values = c("#78a0cb", "#f27843")) + #  breaks = c(-400, -200, 0)
+  facet_grid(layers ~ .) + # , switch="y" switches the position of the cluster lables
+  scale_x_continuous(position = "bottom", labels = abs) + 
+  scale_y_discrete(position = "right") +
+  theme_light() + ggtitle("Number of significant genes") +
+  theme(axis.title = element_blank(),
+        plot.title = element_text(hjust = .5, size = 10, vjust = -.3),
+        legend.title = element_blank(),
+        legend.position = "none",
+        plot.margin = unit(c(0,.2,0,.2), "lines"),
+        panel.border = element_blank())
+  #if(.y == "SubMuc"){clus_lab <- theme(strip.text.y = element_text(angle = 0))}else{clus_lab <- NULL}
+  #{if(.y == "SubMuc", add(theme(strip.text.y = element_text(angle = 0))) else .}
+  } %>%
+  # NB! when using modify facet, you cannot have some specific themes such has theme_minimal()
+  modify_facet_appearance(strip.background.y.fill = clus_col[levels(.x$layers) %in% unique(as.character(.x$layers))])
+)
+grid::grid.draw(A$epi)
+
+# ggsave("/DEGs.pdf", width = 5, height = 4)
+```
+
+
+```{r top-DEGs-expression-by-morf}
+#############
+# TOP DEGs #
+############
+n = 40
+top_df <- DEGs_table %>%
+    #filter(grepl("L4", .$comb)) %>%
+    filter(p_val_adj <= 0.05) %>%
+    filter(., cluster == "L4") %>%
+    filter(., !(grepl("0|^3|9|10|11|12", .$subgroup))) %>%
+    mutate("Sig. in" = paste0(.$layers[cur_group_rows()], collapse = "|"), .by="gene") %>%
+    {. ->> temp} %>%
+    split(~Morphology) %>%
+    imap(., ~ .x %>%
+           nest(data = -comb) %>%
+           #pmap(., ~mutate(..2, data =2) ))
+      #mutate(., data = pmap(., ~slice_max(..2, order_by = tibble(p_val, abs(avg_log2FC)), n=n),  by="Regulation") ) %>%
+      mutate(., data = pmap(., ~slice_max(..2, order_by = tibble(abs(avg_log2FC), p_val), n=n),  by="Regulation") ) %>%
+      mutate(., data = pmap(., ~arrange(..2, desc(avg_log2FC)) )) %>%
+      mutate(., data = set_names(data, .data[["comb"]])) ) %>%
+        {. ->> temp} %>%
+        #select(-comb) %>%
+        #flatten(.) 
+    map(., ~unnest(., data))
+
+
+
+(genes_epi <- top_df$epi %>% distinct(gene, Regulation) %>% deframe() )
+(genes_SubMuc <- top_df$SubMuc %>% distinct(gene, Regulation) %>% deframe() )
+
+#####################
+# DEGs BY FUNCTION #
+#####################
+genes_epi <- c(
+  TGM3 = "Cell Structure & Function",
+  KLK6 = "Cell Structure & Function",
+  KLK7 = "Cell Structure & Function",
+  KLK13 = "Cell Structure & Function",
+  EPCAM = "Cell Structure & Function",
+  #KRT6B = "Cell Structure & Function",
+  #KRT16 = "Cell Structure & Function",
+  KRT15 = "Cell Structure & Function",
+  KRT19 = "Cell Structure & Function",
+  KRT17 = "Cell Structure & Function",
+  KRT2 = "Cell Structure & Function",
+  FLG = "Cell Structure & Function",
+  #DMKN = "Cell Structure & Function",
+  SPRR2E = "Cell Structure & Function",
+  SPRR2G = "Cell Structure & Function",
+  MUC4 = "Cell Structure & Function",
+  TFF3 = "Cell Structure & Function",
+  LGALS7 = "Cell Structure & Function",
+  OLFM4 = "Cell Structure & Function",
+  SPINK6 = "Cell Structure & Function",
+  LYPD2 = "Cell Structure & Function",
+  
+  STAT3 = "Immune",
+  IL18 = "Immune",
+  IGHG1 = "Immune",
+  IGHG2 = "Immune",
+  IGHA2 = "Immune",
+  IGLC2 = "Immune",
+  IGHG4 = "Immune",
+  SH2D3A = "Immune",
+  SLPI = "Immune",
+  IFI27 = "Immune",
+  ISG15 = "Immune",
+  LY6D = "Immune",
+  EPCAM = "Immune",
+  
+  CFD = "Immune",
+  # GALNT5 = "Immune",
+  # ITGB8 = "Cell Structure & Function",
+  # SLCO2A1 = "Immune",
+  PLA2G4D = "Immune",
+  PI3 = "Immune",
+  S100A7 = "Immune"
+  # S100P = "Immune"
+)
+
+genes_SubMuc <- c(
+  # Cell Structure & Function 
+  TFF3 = "Cell Structure & Function",
+  KRT17 = "Cell Structure & Function",
+  KRT6C = "Cell Structure & Function",
+  SPRR2E = "Cell Structure & Function",
+  
+  # MIR205HG = "Cell Structure & Function",
+  COMP = "Cell Structure & Function",
+  MMP11 = "Cell Structure & Function",
+  SPARC = "Cell Structure & Function",
+  MFAP5 = "Cell Structure & Function",
+  #KCNQ1OT1 = "Other",
+  COL1A1 = "Cell Structure & Function",
+  COL3A1 = "Cell Structure & Function",
+  COL27A1 = "Cell Structure & Function",
+  #COL15A1 = "Cell Structure & Function",
+  #COL14A1 = "Cell Structure & Function",
+  TGFBR2 = "Cell Structure & Function",
+  ZEB2 = "Cell Structure & Function",
+  FAM25A = "Cell Structure & Function",
+  CLCA4 = "Cell Structure & Function",
+  # ANKRD36C = "Cell Structure & Function",
+  PCP4 = "Cell Structure & Function",
+  # KCNMA1 = "Cell Structure & Function",
+  # RPS10 = "Cell Structure & Function",
+  # AKAP9 = "Cell Structure & Function",
+  OLFML3 = "Cell Structure & Function",
+  ITGB8 = "Cell Structure & Function",
+
+  # Immune-Related Genes
+  NKTR = "Immune",
+  # IRF2BP1 = "Immune",
+  SLPI = "Immune",
+  TCF4 = "Immune",
+  "HLA-C" = "Immune",
+  IGHG2 = "Immune",
+  IGHG4 = "Immune",
+  IGHA2 = "Immune",
+  IGLC2 = "Immune",
+  IGLC3 = "Immune",
+  IFI6 = "Immune",
+  CCL21 = "Immune",
+  FABP5 = "Immune",
+  #CYBC1 = "Immune",
+  
+  S100A7 = "Immune",
+  S100A8 = "Immune",
+  #S100A9 = "Immune",
+  # PTGDS = "Immune",
+  BDP1 = "Immune",
+  VCAN = "Immune",
+  FOXO3 = "Immune",
+  AREL1 = "Immune"
+)
+
+#################
+# PLOT FUNCTION #
+#################
+morf_DEGs_plot <- function(genes = genes_epi, clus="^5$|^6$|^7|^8"){
+  df <- DATA %>%
+    mutate(., FetchData(., vars = c(names(genes)), slot = "counts")) %>%
+    filter(., grepl(clus, .$Clusters)) %>%
+    as_tibble() %>%
+    select(1:5, layers, all_of(names(genes))) %>%
+    pivot_longer(cols = any_of(names(genes)), names_to = "gene", values_to = "values") %>%
+    # filter(gene == "LGALS7") %>%
+    group_by( groups, gene) %>%
+    summarize(sum_counts = sum(values), .groups="drop") %>%
+    mutate("Sum counts(log10)" = log10(.$sum_counts)) %>%
+    arrange(`Sum counts(log10)`) %>%
+    mutate(type = genes[.$gene])
+  
+  absmax <- function(x) { x[which.max( abs(x) )]}
+  ord <<- df %>%
+    #pivot_wider(id_cols = -`Sum counts(log10)`,names_from = "groups", values_from = "sum_counts") %>%
+    pivot_wider(id_cols = -sum_counts, names_from = "groups", values_from = `Sum counts(log10)`) %>%
+    mutate(diff_L1_L4 = L4-L1, 
+           diff_L2_L4 = L4-L2, 
+           diff_L3_L4 = L4-L3, .by = "gene") %>%
+    rowwise() %>% 
+    mutate(Regulation = sum(c_across(starts_with("diff")) ),
+           max = paste0(names(.[3:6])[c_across(starts_with("L")) == absmax(c_across(starts_with("L")))], collapse = '_') ) %>%
+    ungroup() %>%
+    mutate(Regulation = ifelse(.$Regulation < 0, "DOWN", "UP"),
+           max = str_extract(.$max, "L\\d"))
+  
+  m <- ifelse(clus == "^5$|^6$|^7|^8", "Epithelial", "Submucosal")
+  write.xlsx(ord, paste0(result_dir, "Selected_DEGs_FIG2-3_", m, ".xlsx"))
+  #####################
+  # TOP DEGs PLOTTING #
+  #####################
+  g_ord <- arrange(ord, diff_L1_L4) %>% pull("gene") %>% unique()
+  
+  col <- c("L1"="#FF7F00", "L2"="#FED9A6", "L3"="#6A51A3", "L4"="#9E9AC8" ) # "#FFFFB3", "#BEBADA","#8DD3C7", "#FB8072",
+  col <- c("L1"="#56B4E9","L2"="#009E73","L3"="#CC79A7", "L4"="#FC8D62")
+  
+  (B <- left_join(df, select(ord, Regulation, max, gene), by="gene") %>%
+      #mutate(., gene = factor(gene, levels=g_ord)) %>%
+      ggplot2::ggplot(data=., aes(x=fct_reorder2(gene, Regulation,`Sum counts(log10)`), y=`Sum counts(log10)`)) +
+    geom_point(aes(col=groups), size = 2) +
+    scale_colour_manual(values = col) +
+    facet_grid(cols=vars(type), rows = vars(), scales = "free_x", space = "free_x") +
+    #facet_wrap("max", ncol = 2, strip.position = "top", scales = "free_x", shrink = F) +
+    theme_minimal() +
+    theme(legend.position = "bottom",
+          plot.margin = unit(c(5,-1,5,1),units = "pt"),
+          legend.margin = margin(-15,2,-8,2), # moves the legend box
+          legend.title = element_blank(),
+          legend.text = element_text(size = 8),
+          legend.spacing.x = unit(4, 'pt'),
+          axis.title = element_text(size=8),
+          axis.text.x = element_text(size=8, angle=45, hjust=1, color="black"),
+          axis.title.x = element_blank(),
+          #text = element_text(size = 10),
+    ) )
+}
+
+(B_epi <- morf_DEGs_plot(genes = genes_epi))
+(B_SubMuc <- morf_DEGs_plot(genes = genes_SubMuc, clus="^1$|^4$|^0|^3"))
+
+geneid <- DEGs_table %>% filter(gene %in% geneid) %>% filter(grepl("^1$|Basal", .$layers)) %>% distinct(gene, layers) %>% deframe()
+(Immuno <- morf_DEGs_plot(genes = geneid, clus="^1$|8"))
+```
+
+```{r combine-plots}
+#########################
+# COMBINE PANEL A AND B #
+#########################
+# patchwork does not respect margins when nesting plots, use cowplot instead!
+# dev.new(width=6.7, height=6.7, noRStudioGD = TRUE) 
+(FIG2 <- plot_grid(A$epi, B_epi, ncol = 1, rel_heights = c(1), rel_widths = c(1), labels = c("A", "C")) )
+# dev.new(width=6.7, height=7.5, noRStudioGD = TRUE) 
+(FIG3 <- plot_grid(A$SubMuc, B_SubMuc, ncol = 1, rel_heights = c(1, .7), rel_widths = c(1), labels = c("A", "B")) )
+
+ ggsave(paste0(result_dir, "FIG2.png"), FIG2,  width = 6.7, height = 6.7, bg = "white", dpi = 300)
+ ggsave(paste0(result_dir, "FIG3.png"), FIG3, width = 6.7, height = 7.5, bg = "white", dpi = 300)
+```
+
+# DOT plots (not used)
+```{r}
+ord <- c("Superficial", "Upper IM", "Lower IM", "Basal","1","4","0","3","2","9","10","11","12")
+col <- set_names(c("#E41A1C","#FF7F00","#C77CFF","#984EA3","#00A9FF","#377EB8",
+              "#CD9600","#7CAE00","#e0e067","#FF61CC","#FF9DA7","#999999","#A65628"), ord)
+ID <- sample_id
+col_gr <- c("L1"="#56B4E9","L2"="#009E73","L3"="#CC79A7", "L4"="#FC8D62")
+
+layer_dotplot.fun <- function(DATA, feat, spatial_dist, 
+                              facet = TRUE, 
+                              line = "mean", 
+                              x_max=NULL, 
+                              morf="epi", clus="^5$|^6$|^7|^8"){
+  DAT <- DATA %>%
+    #filter(., grepl(morf, .$sp_annot)) %>%
+    filter(., grepl(clus, .$Clusters)) %>%
+    mutate(., FetchData(., vars = c(feat)) ) %>%
+    select(orig.ident, groups, layers, all_of(c(feat)), {{spatial_dist}})
+  
+  if(morf=="epi"){probs <- c(0.179, 0.9025)}else{probs <- c(0.13, 0.78)}
+  
+    rects <- DAT %>%
+    group_by(layers) %>%
+    summarise(., ystart=min({{spatial_dist}}, na.rm=T), yend=max({{spatial_dist}}, na.rm=T),
+              Q1=quantile({{spatial_dist}}, probs = probs[1], na.rm=T),
+              Q3=quantile({{spatial_dist}}, probs = probs[2], na.rm=T)) %>%
+    filter(!(is.infinite(.$ystart))) %>%
+    mutate(Q1 = ifelse(.$Q1 == min(.$Q1), 0,.$Q1)) %>%
+    mutate(Q3 = ifelse(.$Q3 == max(.$Q3), max(.$yend),.$Q3)) %>%
+    mutate(Q1 = ifelse(.$layers == "4", .$Q1+10,.$Q1)) %>%
+    mutate(Q1 = ifelse(.$layers == "0", .$Q1-.6,.$Q1)) %>%
+    mutate(Q1 = ifelse(.$layers == "Lower IM", .$Q1-.7,.$Q1)) %>%
+    mutate(Q3 = ifelse(.$layers == "Upper IM", .$Q3+.95,.$Q3)) %>%
+    mutate(Q1 = ifelse(.$layers == "10", .$Q1+.5,.$Q1)) %>%
+      {. ->> rect_df} %>%
+    arrange(ystart) %>% ungroup()
+        
+    mean <- DAT %>%
+      #group_by(groups, layers) %>%
+      summarize(mean = mean(.data[[feat]]), median = median(.data[[feat]]), .by = c("groups", "layers")) %>%
+      left_join(rects, mean, by = c("layers")) 
+
+  if(facet == TRUE){facets <- facet_wrap(~groups, ncol = 2) }else{facets <- NULL}
+  
+  dot <- ggplot() +
+    #ggtitle(feature) +
+    geom_rect(data = rects, alpha = 0.1, show.legend=FALSE,
+              aes(xmin = -Inf, xmax = Inf, ymin = Q1, ymax = Q3, fill = layers)) +
+    geom_jitter(data = DAT, aes(x=.data[[feat]], y={{spatial_dist}}, col=layers), 
+                width = 0.1, alpha = 0.7, size=.3) + 
+    #geom_vline(data=mean, aes(xintercept=mean, col=layers)) +
+    scale_fill_manual(values = col) + 
+    scale_colour_manual(values = col) +
+    {if(!(is.null(line))){
+      list(ggnewscale::new_scale_color(),
+      geom_segment(data=mean, aes(x=.data[[line]], y=Q1, xend=.data[[line]], yend=Q3, col=groups)),
+      scale_colour_manual(values = col_gr)) 
+      }} +
+    # geom_smooth(data = filter(DAT, .data[[feat]] != 0), n=1000, aes(y={{spatial_dist}}, x=.data[[feat]], col=orig.ident)) + 
+    guides(fill = guide_legend(override.aes = list(size=2), keyheight = .7, keywidth = .7)) +
+    scale_y_reverse(expand = c(0, 0)) +
+    #scale_x_continuous(expand = c(0, 0)) +
+    {if(!(is.null(x_max))){xlim(-.5, x_max)}} +
+    facets +
+    my_theme + ylab("Similarity in gene expression") +
+    theme(plot.margin = unit(c(0,.2,0,.2), "lines"),
+          #legend.box.margin=margin(0,0,0,0),
+          legend.margin=margin(0,0,0,-5),
+          panel.spacing = unit(0, "cm"),
+          panel.border = element_blank(),
+          axis.line = element_line(),
+          panel.grid.major = element_line(linewidth = 0.2),
+          panel.grid.minor = element_line(linewidth = 0.1))
+  return(dot)
+}
+
+#################################
+# CLUS DOTPLOT PER SUBMUC LAYER #
+#################################
+# dev.new(height=1.9, width=6.7, noRStudioGD = TRUE)
+# dev.new(height=3.2, width=3.54, noRStudioGD = TRUE) #with legend
+feat <- c("KCNQ1OT1","FAM25A","CLCA4","IGHG2" )
+dot_fig <- map(feat, 
+               ~layer_dotplot.fun(DATA, .x, sp_dist_SubMuc, morf="SubMuc", clus="^1$|^4$|^0|^3",
+                                  facet = F, line = "mean")) # , x_max = 6
+dot_fig[[3]]
+C_1 <- wrap_plots(dot_fig, ncol = 4, guides = "collect"  ) + 
+  plot_layout(axis_titles = "collect") & 
+  theme(#legend.position = c(.1, 1.15), legend.direction = "horizontal",
+        plot.margin = unit(c(.2,0,0,.2), "lines"),
+        legend.position = 'top', 
+        legend.justification = "right", 
+        legend.background = element_rect(colour ="gray", linewidth=.2),
+        legend.margin=margin(1,2,1,1), # moves the legend box
+        legend.box.margin=margin(1,1,-4,0), # moves the legend
+        #legend.box.margin=margin(-30,0,-15,0), 
+        # axis.title.y.left = element_text(margin = margin(r = 5))
+        ) 
+
+( C_1 <- plot_grid(C_1, NULL, rel_widths = c(1,.01)) )
+# ggsave("./Figures/03/Fig_03C1.png", C_1, width = 6.7, height = 2.4) #, dpi = 300
+
+#################################
+# CLUS DOTPLOT PER EPI LAYER #
+#################################
+# dev.new(height=1.9, width=6.7, noRStudioGD = TRUE)
+# dev.new(height=3.2, width=3.54, noRStudioGD = TRUE) #with legend
+feat <- c("KRT17","IL18","STAT3","IGHG4" )
+dot_fig <- map(feat, 
+               ~layer_dotplot.fun(DATA, .x, facet = F, line = "mean", sp_dist_epi)) # , x_max = 6
+dot_fig[[1]]
+C_1 <- wrap_plots(dot_fig, ncol = 4, guides = "collect"  ) + 
+  plot_layout(axis_titles = "collect") & 
+  theme(#legend.position = c(.1, 1.15), legend.direction = "horizontal",
+        plot.margin = unit(c(.2,0,0,.2), "lines"),
+        legend.position = 'top', 
+        legend.justification = "right", 
+        legend.background = element_rect(colour ="gray", linewidth=.2),
+        legend.margin=margin(1,2,1,1), # moves the legend box
+        legend.box.margin=margin(1,1,-4,0), # moves the legend
+        #legend.box.margin=margin(-30,0,-15,0), 
+        # axis.title.y.left = element_text(margin = margin(r = 5))
+        ) 
+
+( C_1 <- plot_grid(C_1, NULL, rel_widths = c(1,.01)) )
+ggsave("./Figures/03/Fig_03C1.png", C_1, width = 6.7, height = 2.4) #, dpi = 300
+```
+
+```{r}
+######################
+# COMBINE ALL PANELS #
+######################
+# patchwork does not respect margins when nesting plots, use cowplot instead!
+# dev.new(width=3.54, height=3.2, noRStudioGD = TRUE) 
+
+(plot <- plot_grid( FIG2, C,  ncol = 2, rel_heights = c(1), rel_widths = c(1, .5)) )
+
+# ggsave("./Figures/03/dot_and_tissue.png", C, width = 3.4, height = 3.2, bg = "white", dpi = 300)
+```
