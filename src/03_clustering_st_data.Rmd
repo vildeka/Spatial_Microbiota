@@ -1,5 +1,5 @@
 ---
-title: "Clustering filtered spatial data"
+title: "Clustering spatial data"
 date: "`r format(Sys.time(), '%d %m %Y')`"
 format:
   html:
@@ -70,15 +70,15 @@ if( isFALSE(dir.exists(result_dir)) ) { dir.create(result_dir,recursive = TRUE) 
 #############
 # LODA DATA #
 #############
-DATA <- readRDS(paste0(input_dir,"seuratObj_integrated.RDS"))
+DATA <- readRDS(paste0(input_dir,"seuratObj_integrated.RDS")) 
 
 #################
 # COLOUR PALLET #
 #################
-clus_0.75 <- c("#CD9600","#e0e067","#7CAE00","#00A9FF","#377EB8","#E41A1C","#984EA3",
-               "#FF7F00","#C77CFF","#FF61CC","#FF9DA7","#999999","#A65628","#B07AA1", "#FF9DA7")
-clus_1 <- c("#CD9600","#e0e067","#7CAE00","#00A9FF","#377EB8","#00BFC4","#FF7F00","#C77CFF",
-            "#FF61CC","#E41A1C","#FFFF33","#984EA3","#FF9DA7","#999999","#A65628")
+clus_0.7 <- c("#CD9600","#00A9FF","#e0e067","#7CAE00","#377EB8","#E41A1C","#FF7F00","#C77CFF",
+              "#984EA3","#FF61CC","#FF9DA7","#999999","#A65628","#B07AA1", "#FF9DA7")
+clus_0.9 <- c("#CD9600","#00A9FF","#e0e067","#7CAE00","#377EB8","#00BFC4","#FF7F00","#C77CFF",
+            "#FF61CC","#E41A1C","#984EA3","#FFFF33","#FF9DA7","#999999","#A65628")
 ```
 
 ## Clustering
@@ -89,7 +89,7 @@ clus_1 <- c("#CD9600","#e0e067","#7CAE00","#00A9FF","#377EB8","#00BFC4","#FF7F00
 DATA <- FindNeighbors(DATA, reduction = "harmony", dims = 1:30, k.param = 15, prune.SNN = 1/15) 
 
 # Clustering with louvain (algorithm 1) or leiden (algorithm 4)
-for (res in c(0.1, 0.5, 0.75, 1, 1.5)) {
+for (res in c(0.1, 0.5, 0.7, 0.9, 1)) {
     DATA <- FindClusters(DATA, resolution = res, algorithm = 1)
 }
 
@@ -101,40 +101,42 @@ for (res in c(0.1, 0.5, 0.75, 1, 1.5)) {
 ### UMAP of cluster resolutions
 ```{r 03a_plot_resolution, fig.asp=5/10}
 # dev.new(width=6.6929133858, height=3.3, noRStudioGD = TRUE)
-res <- c("RNA_snn_res.0.75", "RNA_snn_res.1")
-p <- map2(res, list(clus_0.75, clus_1),
+res <- c("RNA_snn_res.0.7", "RNA_snn_res.0.9")
+p <- map2(res, list(clus_0.7, clus_0.9),
           ~plot_clusters.fun(DATA, cluster=.x, txt_size = 10, dot_size = 0.2,
                              color = .y, red = "umapharmony") + xlab("UMAP 1") + ylab("UMAP 2")) 
 plot_grid(ncol = 2, 
           plotlist = p)
+
 ```
 
 ### Cluster resolutions on tissue
 ```{r, 03b_plot_resolutions_on_tissue, fig.height=42, fig.width=7.5, dev = c("png", "pdf")}
-# dev.new(width=6.6929133858, height=14, noRStudioGD = TRUE)
+# dev.new(width=7.5, height=42, noRStudioGD = TRUE)
 plots <- DATA %>%
   mutate(group = orig.ident) %>%
   nest(., data = -group) %>%
   mutate( "res_1" = pmap(., 
-    ~plot_spatial.fun(..2, sampleid=..1, geneid="RNA_snn_res.0.75", 
-                      point_size = 0.7, zoom="zoom", colors = clus_0.75))) %>%
+    ~plot_spatial.fun(..2, sampleid=..1, geneid="RNA_snn_res.0.7", 
+                      point_size = 0.7, zoom="zoom", colors = clus_0.5))) %>%
   mutate( "res_2" = pmap(., 
-    ~plot_spatial.fun(..2, sampleid=..1, geneid="RNA_snn_res.1", 
-                      point_size = 0.7, zoom="zoom", colors = clus_1)))
+    ~plot_spatial.fun(..2, sampleid=..1, geneid="RNA_snn_res.09", 
+                      point_size = 0.7, zoom="zoom", colors = clus_0.7)))
 
 legend_1 <- get_legend(plots$res_1[[2]] + theme(legend.position="right"))
 legend_2 <- get_legend(plots$res_2[[1]] + theme(legend.position="right"))
 legend <- plot_grid( legend_1, legend_2, ncol = 1)
-combined <- wrap_plots(plotlist=c(plots$res_1, plots$res_2), nrow = 22, byrow = F) & theme(legend.position="none")
+combined <- wrap_plots(plotlist=c(plots$res_1, plots$res_2), nrow = 21, byrow = F) & theme(legend.position="none")
 combined <- plot_grid( combined, legend, ncol = 2, rel_widths = c(1, .3)) 
 combined
+# ggsave(paste0("./", "test_SCT.pdf"), combined, width=7.5, height=42)
 ```
 
 ### Set cluster resolution
 ```{r set-resolution}
 DATA <- DATA %>%
-  rename(Clusters="RNA_snn_res.0.75") %>%
-  rename(Clusters_1.0="RNA_snn_res.1") %>%
+  rename(Clusters="RNA_snn_res.0.7") %>%
+  rename(Clusters_0.7="RNA_snn_res.0.9") %>%
   SetIdent(., value = "Clusters") %>%
   select(-any_of(contains(c("RNA_snn_res","seurat_clusters"))))
 ```
@@ -154,7 +156,7 @@ p[[1]] + ggtitle("")
 (p <- plot_st_meta.fun( DATA,
         feat =  "Clusters",
         zoom = "zoom",
-        colors = clus_0.75,
+        colors = clus_0.5,
         alpha = .9,
         ncol = 4,
         #annot_col = "#dbd9d9",
@@ -168,10 +170,8 @@ p[[1]] + ggtitle("")
 ###################
 # ADD ANNOTATION #
 ##################
-#ord1 <- c("Superficial", "Upper IM", "Lower IM", "Basal","5","3","4","0","2","1","10","8","12","13","14")
-#ord2 <- c("9", "6", "7", "11","5","3","4","0","2","1","10","8","12","13","14")
-ord1 <- c("Superficial", "Upper IM", "Lower IM", "Basal","3","4","0","2","1","9","10","11","12")
-ord2 <- c("5", "7", "8", "6","3","4","0","2","1","9","10","11","12")
+ord1 <- c("Superficial", "Upper IM", "Lower IM", "Basal","1","4","0","3","2","9","10","11","12")
+ord2 <- c("5", "6", "7", "8", "1","4","0","3","2","9","10","11","12")
 
 epi_layers <- set_names(ord1, ord2)
 
@@ -191,6 +191,7 @@ DATA_sub <- as_tibble(DATA) %>%
   mutate(across(contains("_n_"), ~set_names(.x, paste0(.data[["gr"]],"_",.data[["orig.ident"]]))))
       
 table(DATA$Clusters)
+n_samples <- length(unique(DATA$orig.ident))
 
 t <- list(DATA_sub$epi_n_before, DATA_sub$subMuc_n_before) %>%
   map(., ~ .x %>%
@@ -201,24 +202,24 @@ t <- list(DATA_sub$epi_n_before, DATA_sub$subMuc_n_before) %>%
                L2_sum = sum(c_across(starts_with("L2_"))),
                L3_sum = sum(c_across(starts_with("L3_"))),
                L4_sum = sum(c_across(starts_with("L4_")))) %>%
-        select("Clus ", sort(colnames(.)[2:24]), everything()) %>%
+        select("Clus ", sort(colnames(.)[2:n_samples]), everything()) %>%
         arrange(match(Clus, paste0("**", ord2, "**")))
   )
-knitr::kable(t[[1]][,1:23], caption = "Distribution of epithelial spots per cluster per subject")
-knitr::kable(t[[1]][,24:28], caption = "Distribution of epithelial spots per group")
 
-knitr::kable(t[[2]][,1:23], caption = "Distribution of submucosal spots per cluster per subject")
-knitr::kable(t[[2]][,24:28], caption = "Distribution of submucosal spots per group")
+knitr::kable(t[[1]][,1:(n_samples+1)], caption = "Distribution of epithelial spots per cluster per subject")
+knitr::kable(t[[1]][,c(1,(n_samples+3):ncol(t[[1]]))], caption = "Distribution of epithelial spots per group")
+
+knitr::kable(t[[2]][,1:n_samples], caption = "Distribution of submucosal spots per cluster per subject")
+knitr::kable(t[[2]][,c(1,(n_samples+3):ncol(t[[1]]))], caption = "Distribution of submucosal spots per group")
 
 ```
 
 
 The log2 count can work as a proxy for cell density. Here we see the distribution of counts per cluster
 ```{r 03d_log2count_per_cluster}
-clus_col <- c("#E41A1C","#FF7F00","#C77CFF","#984EA3","#00BFC4","#00A9FF","#377EB8",
-              "#CD9600","#7CAE00","#e0e067","#FFFF33","#FF61CC","#FF9DA7","#999999","#A65628") #,"#B07AA1"
-#clus_lvl <- c("9", "6", "7", "11","5","3","4","0","2","1","10","8","12","13","14")
-clus_lvl <- c("5", "7", "8", "6","3","4","0","2","1","9","10","11","12")
+clus_col <- c("#E41A1C","#FF7F00","#C77CFF","#984EA3","#00A9FF","#377EB8",
+               "#CD9600","#7CAE00","#e0e067","#FF61CC","#FF9DA7","#999999","#A65628") #,"#B07AA1",
+clus_lvl <- c("5", "6", "7", "8", "1","4","0","3","2","9","10","11","12")
 
 DATA %>%
   mutate("Count (log2)" = log2(.$nCount_RNA)) %>%
