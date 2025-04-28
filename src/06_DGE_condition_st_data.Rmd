@@ -1,0 +1,627 @@
+---
+title: "Differential gene expression condition"
+date: "`r format(Sys.time(), '%d %m %Y')`"
+format:
+  html:
+    embed-resources: true
+    code-fold: show
+params:
+  run.dgea: TRUE
+  fig.path: "`r paste0(params$fig.path)`" #./Figures/
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r background-job, eval=FALSE, include=FALSE}
+source("../bin/render_with_jobs.R")
+
+# quarto
+# render_html_with_job(out_dir = lab_dir)
+# fs::file_move(path = file, new_path = paste0(lab_dir, file))
+
+# currently using quarto for github and kniter for html due to source code option 
+render_git_with_job(fig_path = "./Figures/06/")
+# Change the figure path from ./Figures/03/ to ../Figures/03/:
+system2(command = "sed", stdout = TRUE,
+        args = c("-i", "''","-e", 's/src=\\"\\./src=\\"\\.\\./g',
+                 paste0("./md_files/", basename("./06_DGE_condition_st_data.md"))))
+
+# kniter
+knit_html_with_job(out_dir = "../lab_book/06_DGE_condition_st_data", fig_path = "./Figures/06/")
+```
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  fig.width     = 6.6929133858,
+  fig.path      = params$fig.path,#"../Figures/",
+  fig.align     = "center",
+  message       = FALSE,
+  warning       = FALSE,
+  dev           = c("png"),
+  dpi           = 300,
+  fig.process = function(filename){
+    new_filename <- stringr::str_remove(string = filename,
+                                        pattern = "-1")
+    fs::file_move(path = filename, new_path = new_filename)
+    ifelse(fs::file_exists(new_filename), new_filename, filename)
+  }
+  )
+# resolve functions with same name across packages
+unnest <- tidyseurat::unnest_seurat
+
+# set seed for all operations
+c <- addTaskCallback(function(...) {set.seed(123);TRUE})
+# removeTaskCallback(c)
+sample(1:500, 3)
+#  setwd("~/work/Brolidens_work/Projects/Spatial_Microbiota/src")
+```
+
+### Load data and libraries
+```{r Load_data}
+##################
+# LOAD LIBRARIES #
+##################
+library(tidyverse)
+library(Seurat)
+library(SeuratObject)
+library(tidyseurat)
+library(edgeR)
+library(cowplot)
+library(ggrepel)
+library(openxlsx)
+
+source("../bin/plotting_functions.R")
+
+#########
+# PATHS #
+#########
+input_dir <- "../results/03_clustering_st_data/"
+result_dir <- "../results/06_DGE_condition_st_data/"
+marker_dir <- "./marker_genes_condition/"
+if( isFALSE(dir.exists(result_dir)) ) { dir.create(result_dir,recursive = TRUE) }
+if( isFALSE(dir.exists(marker_dir)) ) { dir.create(marker_dir,recursive = TRUE) }
+
+#############
+# LOAD DATA #
+#############
+# DATA <- readRDS(paste0(input_dir,"seuratObj_deconvolution_scdc.RDS"))
+DATA <- readRDS(paste0(input_dir,"seuratObj_clustered.RDS"))
+epi_clus <- "^5$|^6$|^7|^8$" 
+
+#################
+# COLOUR PALLET #
+#################
+clus_col <- c( "#e0e067","#7CAE00","#CD9600","#00A9FF","#377EB8","#984EA3","#E41A1C","#C77CFF","#00BFC4","#FF7F00","#FFFF33")
+exp_col <- c("#EFEDF5","#DADAEB","#BCBDDC","#9E9AC8","#807DBA","#6A51A3","#54278F","#3F007D")
+gr_col <- c("#88CCEE", "#CC6677")
+```
+
+```{r Functions, eval=params$run.dgea}
+########################
+# SEURAT DGEs FUNCTION #
+########################
+# obj <- DATA_sub$data[[1]]
+# condition <- 'groups'
+# subgroup <- "Clusters"
+DEGs_fun <- function(obj, condition, subgroup, comb, test="wilcox"){
+  obj <- filter(obj, grepl(comb, get(condition)))
+  obj <- SetIdent(obj, value = condition)
+  
+  DATA_degs <- obj %>%
+  mutate(clus = .data[[subgroup]]) %>%
+  nest(data = -c("clus")) %>%
+  mutate( DEGs = map(data, 
+        ~FindAllMarkers(.x,
+                       test.use = test,
+                       only.pos = F,
+                       return.thresh = 1,
+                       max.cells.per.ident = Inf,
+                       logfc.threshold = -Inf,
+                       assay = "RNA",
+                       min.pct = -Inf)
+                    ))
+
+  DEGs_table <- DATA_degs %>%
+    mutate(DEGs = setNames( .[["DEGs"]], .$clus)) %>%
+    .$DEGs %>%
+    map(., ~as_tibble(.x)) %>%
+    #map2(., comb$comb, ~mutate(.x, Combination = .y)) %>%
+    bind_rows(., .id = "subgroup") %>%
+    mutate(pct.diff = -.$pct.2-.$pct.1) %>%
+    mutate(log.pct.diff = -log2(.$pct.2/.$pct.1))
+  return(DEGs_table)
+}
+```
+
+### Spot distribution after subsetting
+```{r Subset-data, eval=params$run.dgea}
+####################################
+# SUBSET SEURAT OBJECT PER CLUSTER #
+####################################
+# creating a subseted object with; 
+# 30 epithelial spots per sampleID for each cluster
+# 50 submucosal spots per sampleID for each cluster
+# for basal cluster 20 from epithelial spots and 20 from submucosal spots
+set.seed(1)
+DATA_sub <- DATA %>%
+  # removes the Basal cluster:
+  filter(layers != "Basal") %>%
+  mutate(gr = .$groups) %>%
+  mutate(ID = .$orig.ident) %>%
+  mutate(sp = .$sp_annot) %>%
+  
+  nest(., data=-c(gr, orig.ident, sp)) %>%
+  mutate(downsample = ifelse(.$sp == "epi", 30, 50)) %>%
+  mutate(subset = map2(data, .$downsample, ~filter(.x, .cell %in% WhichCells(., downsample = .y))), .after="downsample") %>%
+  select(-data) 
+
+# basal cluster, special treatment, because its a boundary cluster
+DATA_basal <- DATA %>%
+  filter(layers == "Basal") %>%
+  mutate(gr = .$groups) %>%
+  mutate(ID = .$orig.ident) %>%
+  mutate(sp = .$sp_annot) %>%
+  
+  nest(., data=-c(orig.ident, sp, gr)) %>%
+  mutate(subset = map(data, ~filter(.x, .cell %in% WhichCells(., downsample = 20))) ) %>%
+  select(-data) 
+
+DATA_sub <- bind_rows(DATA_sub, DATA_basal) %>%
+  unnest(subset) %>%
+  mutate(gr = .$groups) %>%
+  mutate(ID = .$orig.ident) %>%
+  mutate(sp = .$sp_annot) %>%
+  mutate(layers = factor(.$layers, levels = levels(DATA$layers))) %>%
+  nest(., subset=-c(gr, orig.ident, sp)) %>%
+  
+  
+  mutate(across(c("subset"), ~map(., ~table(.x$layers)), .names = "n_{.col}")) %>%
+  mutate(across(contains("n_"), ~set_names(.x, paste0(.data[["gr"]],"_",.data[["orig.ident"]]))))
+  
+
+###########################
+# SPOT DISTRIBUTION TABLE #
+###########################
+ord <- c("Superficial", "Upper IM", "Lower IM", "Basal","1","4","0","3","2","9","10","11","12")
+
+t <- DATA_sub %>%
+  split(., ~sp) %>% 
+  map(.,  ~ .x %>%
+  .$n_subset %>%
+  bind_cols("Clus" = paste0("**",names(table(DATA$layers)),"**"), .) %>%
+  rowwise() %>% 
+  mutate("Clus " = Clus,
+         L1_sum = sum(c_across(starts_with("L1_"))),
+         L2_sum = sum(c_across(starts_with("L2_"))),
+         L3_sum = sum(c_across(starts_with("L3_"))),
+         L4_sum = sum(c_across(starts_with("L4_")))) %>%
+  select("Clus ", sort(colnames(.)[2:23]), everything()) %>%
+  arrange(match(Clus, paste0("**", ord, "**")))
+  )
+
+##############
+# EPITHELIUM #
+##############
+knitr::kable(t[[1]][,1:22], caption = "Distribution of epithelial spots per cluster per subject")
+knitr::kable(t[[1]][,23:27], caption = "Distribution of epithelial spots per group")
+
+#############
+# SUBMUCOSA #
+#############
+knitr::kable(t[[2]][,1:22], caption = "Distribution of submucosal spots per cluster per subject")
+knitr::kable(t[[2]][,23:27], caption = "Distribution of submucosal spots per group")
+```
+
+### Run differential gene expression analysis
+```{r DEGs, include=TRUE, eval=params$run.dgea}
+##############################################
+# DGEs BETWEEN CONDITION FOR EACH SUBGROUPS #
+##############################################
+#epi_clus <- "^9$|^6$" 
+
+contrasts.fun <- function(groups, levels = NULL){
+    if(is.null(levels)){levels <- as.character(sort(unique(groups),na.last = NA))}
+    n <- combn(levels,2) 
+    g <- map_chr(seq_along(1:ncol(n)), ~paste(n[1,.x], n[2,.x], sep = "|"))
+    n <- map_chr(seq_along(1:ncol(n)), ~paste(n[1,.x], n[2,.x], sep = "-"))
+    g <- set_names(g, n)
+    return(g)
+}
+c <- contrasts.fun(groups=unique(DATA$groups)) 
+
+DEGs_table_epi <- DATA_sub %>%
+  select(subset) %>%
+  unnest(subset) %>%
+  filter(., grepl(epi_clus, .$Clusters) & sp_annot == "epi" | layers == "Basal" )
+  #DEGs_fun(., "groups", "Clusters", comb = "L2|L4") #%>%
+
+DEGs_table_epi <- map(c, ~DEGs_fun(DEGs_table_epi, "groups", "Clusters", comb = .x)) %>%
+  bind_rows(.id = "comb")
+
+write_csv(DEGs_table_epi, paste0(result_dir, "DGEs_condition_wilcox_epi.7", ".csv"))
+# DEGs_table_epi <- read_csv(paste0(result_dir, "DGEs_condition_wilcox_epi.7", ".csv"))
+
+DEGs_table_subMuc <- DATA_sub %>%
+  filter(sp == "SubMuc") %>%
+  select(subset) %>% 
+  unnest(subset) %>% 
+  filter((grepl("1|^4$|^0$|^3$|^2$|^9|^10$", .$Clusters))) 
+
+DEGs_table_subMuc <- map(c, ~DEGs_fun(DEGs_table_subMuc, "groups", "Clusters", comb = .x)) %>%
+  bind_rows(.id = "comb")
+
+write_csv(DEGs_table_subMuc, paste0(result_dir, "DGEs_condition_wilcox_sub.7", ".csv"))
+# DEGs_table_subMuc <- read_csv(paste0(result_dir, "DGEs_condition_wilcox_sub.7", ".csv"))
+
+DEGs_table <- bind_rows(DEGs_table_epi, DEGs_table_subMuc) %>%
+  # keeps only on of the comparisons (L1vsL2 L2vsL1):
+  filter(ifelse(str_extract(.$comb, "L\\d$" ) == .$cluster, TRUE, FALSE))
+write_csv(DEGs_table, paste0(result_dir, "DGEs_condition_wilcox.0.7", ".csv"))
+```
+
+```{r annotation}
+###################
+# ADD ANNOTATION #
+##################
+ord <- c("Superficial", "Upper IM", "Lower IM", "Basal","1","4","0","3","2","9","10","11","12")
+ord1 <- c("5", "6", "7", "8", "1","4","0","3","2","9","10","11","12")
+l <- set_names(ord, ord1)
+
+DEGs_l <- list("Condition"=DEGs_table)
+
+DEGs_l <- map(DEGs_l, ~ .x %>%
+  dplyr::select(-any_of(c("layers"))) %>%
+  #mutate(., subgroup = factor(.$subgroup, levels = ord1)) %>%
+  mutate(., layers = factor(l[as.character(.$subgroup)], levels = ord)) %>%
+  mutate(Regulation = ifelse(avg_log2FC > 0 & p_val_adj < 0.05, "UP",
+                            ifelse(avg_log2FC < 0 & p_val_adj < 0.05,"DOWN", "NOT SIG."))) %>%
+  mutate(Regulation = factor(.$Regulation, levels = c("UP", "DOWN", "NOT SIG."))) %>%
+  mutate(., Morphology = ifelse(grepl(epi_clus, .$subgroup), "epi", "SubMuc")) #%>%
+  #split(., ~Morphology) %>%
+  #map(., ~arrange(.x, Regulation, layers))
+  ) 
+
+sig_n <- function(x, patt){x[grep( patt, names(x) )]}
+order_df <- function(df){
+  temp <- df %>%
+    split(., ~Regulation+layers) 
+    
+  df_ <- list(sig_n(temp, "^UP|^DOWN+"), sig_n(temp, "^NOT+")) %>% 
+    list_flatten() %>% 
+    bind_rows()
+  return(df_)
+}
+
+DEGs_table <- DEGs_l[[1]]
+#DEGs_table <- bind_rows(DEGs_l[[1]]) %>% order_df()
+
+################
+# SUMMARY DEGs #
+################
+summary <- DEGs_table %>%
+  split(~comb) %>%
+  imap(., ~ .x %>%
+        filter(., p_val_adj < 0.05) %>%
+        summarise(genes = n(), .by = "Regulation") %>%
+        #add_case(Regulation="Total", genes=sum(.$genes))
+        add_case(Regulation=c("Total", ""), genes=c(sum(.$genes), NA)) %>%
+        mutate(Combination = c(.y, rep("", 3)), .before="Regulation")
+        ) %>% 
+  bind_rows() 
+
+```
+
+```{r}
+c <- c("L1-L2", "L1-L3", "L2-L3", "L1-L4", "L2-L4", "L3-L4")
+sum <- DEGs_table %>%
+  filter(., p_val_adj < 0.05) %>%
+  filter((grepl("\\d", .$layers))) %>%
+  filter(!(grepl("9|11|12", .$subgroup))) %>%
+  summarise(genes = n(), .by = c("comb", "Regulation", "layers")) %>% 
+  mutate(genes = ifelse(Regulation == "DOWN", -(.$genes), .$genes)) %>%
+  mutate(layers = factor(.$layers, levels = ord)) %>%
+  mutate(comb = factor(.$comb, levels = c))
+
+# dev.new(width=5, height=4, noRStudioGD = TRUE) 
+ggplot(data = sum) +
+  geom_col(aes(x = genes, y = comb, fill = Regulation)) +
+  #coord_flip() + 
+  scale_fill_manual(values = c("#78a0cb", "#f27843")) +
+  facet_grid(layers ~ .) +
+  #scale_y_discrete(position = "right") +
+  theme_minimal() 
+ggsave("/Users/vilkal/Library/CloudStorage/OneDrive-KI.SE/Documents/Disputasjon/Figures/Presentation figs/DEGs.pdf", width = 5, height = 4)
+```
+
+
+```{r get_DEGs, eval=isFALSE(params$run.dgea)}
+# Load data
+DEGs_table <- read_csv(paste0(result_dir,"DGEs_condition_wilcox.0.7.csv"))
+```
+
+```{r top-tables}
+top_aggregate.fun <- function(DEGs, n=40) {
+  top <- DEGs %>%
+    filter(p_val_adj <= 0.05) %>%
+    mutate("Sig. in" = paste0(.$layers[cur_group_rows()], collapse = "|"), .by="gene") %>%
+    {. ->> temp} %>%
+    split(~Morphology) %>%
+    imap(., ~ .x %>%
+      slice_max(., n=n, order_by = tibble(abs(avg_log2FC), p_val), by="Regulation") %>%
+      arrange(., desc(avg_log2FC)) )
+  
+  # df per cluster
+  ord <- ord[ord %in% unique(DEGs$layers)]
+  Clusters <- DEGs %>% 
+    arrange(match(Regulation, c("UP", "DOWN"))) %>% 
+    split(~layers) %>% .[ord]
+  
+  # summary of regulation
+  sig_count_uniqe <- temp %>% 
+    dplyr::select(., gene, Regulation) %>% 
+    unique() %>% group_by(Regulation) %>% 
+    add_tally() %>%
+    mutate(layers = "uniq total")
+  
+  sig_count <- temp %>% 
+    dplyr::select(., gene, Regulation, layers) %>% 
+    unique() %>% 
+    group_by(layers, Regulation) %>% 
+    add_tally(., ) %>% 
+    arrange(match(layers, ord)) %>%
+    bind_rows(sig_count_uniqe, .) %>%
+    dplyr::select(., -gene) %>% 
+    unique() %>% 
+    pivot_wider( names_from = Regulation, values_from = n)
+  
+  gene_id.fun <- function(top){
+    g <- set_names(top$gene, top$Regulation) %>% .[!duplicated(.)]
+  
+    entz <- unlist(mget(org.Hs.egSYMBOL2EG, x=g, ifnotfound=NA))
+    gene_name <- AnnotationDbi::select(org.Hs.eg.db, keys=entz, 
+                                       columns=c("GENENAME"), keytype="ENTREZID") %>%
+      bind_cols(gene = names(entz), .) 
+    
+    top <- top %>%
+      filter(., gene %in% c(g[names(g)=="UP"][1:15], g[names(g)=="DOWN"][1:15])) %>%
+      #bind_cols(., dplyr::select(gene_name,gene,"Gene name"="GENENAME")) %>%
+      left_join(., dplyr::select(gene_name,gene,"Gene name"="GENENAME"), by="gene") %>%
+      filter(n()==1 | n()>1 & p_val==max(p_val), .by="gene") %>% # filter duplicate genes 
+      dplyr::select(gene, "Gene name", Cluster=layers, everything(), -c(1:2), 
+                    -any_of(c("pct.1", "pct.2","cluster","log.pct.diff","morf")))
+    return(top)
+  }
+  top <- map(top, ~gene_id.fun(.x))
+  
+  l <- append(list(top[[1]], top[[2]], sig_count), Clusters) %>% 
+    set_names(.,c("top15 epi","top15 subMuc", "sig DEGs", ord)) 
+  return(l)
+  #return(list("top15"=top, "sig DEGs"=sig_count, "Clusters"=Clusters))
+}
+
+library(org.Hs.eg.db)
+DEGs_l <- DEGs_table %>%
+  filter(!(grepl("9|11|12", .$subgroup))) %>%
+  #filter(!(grepl("L4", .$comb))) %>%
+  split(~comb) %>%
+  {. ->> all_DEGs_l} # %>%
+  #.[!(grepl("L4", names(all_DEGs_l)))]
+top <- map(DEGs_l, ~top_aggregate.fun(.x))
+
+suppressWarnings({detach("package:org.Hs.eg.db", unload = TRUE)
+                  detach("package:AnnotationDbi", unload = TRUE)})
+
+# Suppl. Tables per comparison
+n <- names(top)
+imap(top, ~write.xlsx(.x, keepNA=TRUE, na.string="", overwrite=TRUE,
+           file=paste0(result_dir, paste0("Table ",.y,".xlsx"))))
+
+# get all clusters in one df:
+"L1-L4" <- DEGs_l[["L1-L4"]] %>%
+  #filter(grepl("KLK5", .$gene))
+  filter(p_val_adj <= 0.05) %>%
+  mutate("Sig. in" = paste0(.$layers[cur_group_rows()], collapse = "|"), .by="gene") %>%
+  split(~Morphology) %>%
+  map(., ~mutate(.x, n = n(), .by = "gene", .after = "layers"))
+
+# count of significant genes 
+n <- names(top)
+top %>% 
+  map_depth(., 1, ~pluck(.x, "sig DEGs")) %>% 
+  #flatten() %>% set_names(., n) %>% 
+  imap(., ~add_row(.x, layers = c("", paste0("*",.y,"*")), .before = 1 )) %>% 
+  bind_rows() %>%
+  { . ->> tab_sig } %>%
+  knitr::kable()
+
+```
+
+### Volcano plots of differentially expressed genes per cluster
+```{r 06a_DEGs_volcano_plot_epi, fig.width=19, fig.height=10, dev=c('png','pdf')}
+# dev.new(width=19, height=7, noRStudioGD = TRUE) 
+###########################
+# VOLCANO PLOT EPITHELIUM #
+###########################
+DEGs_filt <- DEGs_table %>% 
+  filter(grepl(epi_clus, .$subgroup)) %>%
+  filter(p_val < 0.099) 
+
+Volcano.fun_logFC(DEGs_filt, "layers", y.axis="p-value", 
+                  lab_size = 5, dot_size = .7,
+                  up=c(.6, 0.05), down = c(-.6, 0.05)) + # labeling: (logFC, p-value)
+  ylab("avg. Log2 fold change") +
+  facet_wrap(~comb, nrow = 1)
+
+ggsave(paste0("./Figures/06/","volcano_epi.0.7.pdf"), width = 19, height = 10)
+```
+
+```{r 06b_DEGs_volcano_plot_subMuc, fig.width=19, fig.height=10, dev=c('png','pdf')}
+# dev.new(width=19, height=10, noRStudioGD = TRUE) 
+###########################
+# VOLCANO PLOT SUBMUCOSA #
+###########################
+DEGs_filt <- DEGs_table %>% 
+  filter(!(grepl(epi_clus, .$subgroup))) %>%
+  #filter(!(grepl("L2-L4", .$comb))) %>%
+  filter(p_val < 0.099) #%>%
+  #filter(p_val_adj < 0.05)
+
+Volcano.fun_logFC(DEGs_filt, "layers", y.axis="p-value", 
+                  lab_size = 5, dot_size = .7,
+                  up=c(.6, 0.05), down = c(-.6, 0.05)) +# labeling: (logFC, p-value)
+  ylab("avg. Log2 fold change") +
+  facet_wrap(~comb, nrow = 1)
+
+ggsave(paste0("./Figures/06/","volcano_sub.0.7.pdf"), width = 25, height = 10)
+```
+
+```{r pseudo-bulk}
+###################
+# PSEUDOBULK DEGs #
+###################
+pseudo.bulk <- function(DATA, groups, contrast="pairwise"){
+  # get the count matrix for all cells
+  sparse_mtrx <- DATA@assays$RNA@counts
+  
+  # Compute pseudobulk
+  mm <- Matrix::sparse.model.matrix(~0 + DATA$orig.ident)
+  pseudobulk <- sparse_mtrx %*% mm
+  colnames(pseudobulk) <- str_extract(colnames(pseudobulk), "P\\d\\d\\d")
+  pseudobulk <- pseudobulk[, names(groups)[names(groups) %in% DATA$orig.ident]]
+  
+  # define the groups
+  gr = groups[colnames(pseudobulk)]
+  
+  dge.list <- DGEList(counts = pseudobulk, group = factor(gr))
+  keep <- filterByExpr(dge.list)
+  dge.list <- dge.list[keep, , keep.lib.sizes = FALSE]
+  
+  dge.list <- calcNormFactors(dge.list)
+  design = model.matrix(~gr)
+  
+  colnames(design) <- sub("gr","",colnames(design))
+  colnames(design) <- sub("\\(Intercept\\)","Intercept",colnames(design))
+  colnames(design) <- sub(" ","_",colnames(design))
+  
+  dge.list <- estimateDisp(dge.list, design)
+  
+  fit <- glmQLFit(dge.list, design)
+  
+  
+  if(contrast == "across"){
+    # across all groups
+    qlf <- glmQLFTest(fit, coef = 2:ncol(design)) # with intercept
+    top <- topTags(qlf, n = Inf)[[1]] %>% as_tibble(., rownames = "symbol")
+  }else{
+    # pairwise
+    levels <- as.character(sort(unique(groups),na.last = NA))
+    n <- combn(levels,2) 
+    g_ <<- map_chr(seq_along(1:ncol(n)), ~paste(n[1,.x], n[2,.x], sep = "-"))
+    s <- seq_along(1:ncol(n)) %>% set_names(g_)
+    g <- sub(paste0("^(",levels[1], ")-(.*)"), '-\\2', g_) # with intercept
+   
+    
+    CONTRASTS <- makeContrasts( contrasts=g,
+                                levels = design )
+    
+    qlf <- map(s, ~ glmQLFTest(fit, contrast = CONTRASTS[,.x]))
+    top <- map(qlf, ~topTags(.x, n = Inf)[[1]]) %>% 
+           map(., ~rownames_to_column(.x, var = "Genes"))
+    top <- set_names(top, g_)
+    top <- bind_rows(top, .id = "comparison")
+  }
+  
+  return(top) 
+  #return(list(toptable, design))
+}
+
+sample_id <- c("P020","P045","P050","P057",
+               "P008","P026","P031","P044","P080","P105", 
+               "P001","P004","P014","P018","P087","P118",
+               "P021","P024","P067","P081","P117")
+groups <- c( "L1","L1","L1","L1",
+             "L2","L2","L2","L2","L2","L2",
+             "L3","L3","L3","L3","L3","L3",
+             "L4","L4","L4","L4","L4")
+groups <- set_names(groups, sample_id)
+# remove specified genes:
+remove_genes <- function(x, gene_name) x[!(grepl(gene_name, rownames(x[["RNA"]]))), ]
+
+# pseudo bulk all spots no clusters
+pseudo_DEGs_allspots <- DATA %>%
+  pseudo.bulk(., sample_id, groups, contrast="across")
+  
+# pseudo bulk per cluster, across all groups (L1-L4)
+# Cluster nine is not present in P031 (L2) and P081 (L4), but I still ran it by changing the code to remove those two samples if 
+# the cluster was missing 
+pseudo_DEGs <- DATA %>%
+  nest(data = -c(layers)) %>%
+  filter(!(grepl("^11$|^12$", .$layers))) %>%
+  #remove_genes(., "^MT-|^IGHG|^IGHM$|^IGHD|^IGHA|^IGK|^IGL|JCHAIN") %>% # "^MT-|MALAT1|^HB[^(P)]" pseudo_DEGs_clus[9,] %>%
+  mutate(across = pmap(., ~pseudo.bulk(..2, groups, contrast="across"))) %>%
+  mutate(pairwise = pmap(., ~pseudo.bulk(..2, groups, contrast="pairwise"))) %>%
+  mutate(across(c("pairwise", "across"), ~set_names(.x, .data[["layers"]]) )) %>%
+  select(-data) %>%
+  arrange(match(layers, levels(DATA$layers))) %>%
+  mutate(pval.0.001 = map_int(across, ~ nrow(filter(.x, PValue <= 0.001))), .after="across") %>%
+  mutate(FDR.0.05 = map_int(across, ~ nrow(filter(.x, FDR <= 0.05))), .after="across") %>%
+  #add_column(., !!!g_ ) pseudo_DEGs_clus %>%
+  mutate("L1-L2" := map_int(pairwise, ~ nrow(filter(.x, FDR <= 0.05 & comparison == g_[1]))),
+         "L1-L3" := map_int(pairwise, ~ nrow(filter(.x, FDR <= 0.05 & comparison == g_[2]))),
+         "L1-L4" := map_int(pairwise, ~ nrow(filter(.x, FDR <= 0.05 & comparison == g_[3]))),
+         "L2-L3" := map_int(pairwise, ~ nrow(filter(.x, FDR <= 0.05 & comparison == g_[4]))),
+         "L2-L4" := map_int(pairwise, ~ nrow(filter(.x, FDR <= 0.05 & comparison == g_[5]))),
+         "L3-L4" := map_int(pairwise, ~ nrow(filter(.x, FDR <= 0.05 & comparison == g_[6]))),
+         "UP" := map_int(pairwise, ~ nrow(filter(.x, FDR <= 0.05 & logFC > 0))),
+         "DOWN" := map_int(pairwise, ~ nrow(filter(.x, FDR <= 0.05 & logFC < 0))) )
+
+saveRDS(pseudo_DEGs, paste0(result_dir,"Pseudobulk_across_DEGs.RDS"))
+# pseudo_DEGs <- readRDS(paste0(result_dir,"Pseudobulk_across_DEGs.RDS"))
+pseudo_DEGs_clus[1:4]
+pseudo_DEGs_clus[c(1,4:13)]
+```
+
+### Save DEGs tables
+```{r save_DGEs, include=TRUE, eval=params$run.dgea, results='hide'}
+###################
+# SAVE CONDITIONS #
+###################
+write_csv(DEGs_table, paste0(result_dir, "DGEs_condition_wilcox.0.7", ".csv"))
+
+DEGs_table %>% 
+  mutate(c = paste(comb,layers,sep=".")) %>%
+  nest(data = -c) %>%
+  separate(c, c("comb", "Clusters"), sep = "\\.") %>%
+  arrange(match(Clusters, ord)) %>%
+  mutate(data = setNames(.[["data"]], .$Clusters)) %>%
+  group_by(comb) %>%
+  summarise(data = list(data), .groups = "drop") %>%
+  add_case(comb = "summary", data = list("summary"=summary)) %>%
+pmap(., ~write.xlsx(..2, keepNA=TRUE, na.string="", overwrite=TRUE,
+           file=paste0(result_dir,"DGEs_condition_wilcox_",..1,".0.7.xlsx")) )
+
+########################
+# SAVE PSEUDOBULK DEGs #
+########################
+write.xlsx(set_names(pseudo_DEGs_clus$across, pseudo_DEGs_clus$layers), 
+           keepNA=TRUE, na.string="NA", overwrite=TRUE,
+           file=paste0(result_dir,"Pseudobulk_clus_across_DEGs.0.7.xlsx"))
+
+set_names(pseudo_DEGs_clus$pairwise, pseudo_DEGs_clus$layers) %>%
+  bind_rows(., .id = "Clusters") %>%
+  filter(FDR < 0.05) %>%
+  #split(~Clusters)
+  split(~comparison) %>%
+  write.xlsx(., 
+           keepNA=TRUE, na.string="NA", overwrite=TRUE,
+           file=paste0(result_dir,"Pseudobulk_clus_pairwise_DEGs.0.7.xlsx"))
+
+write.xlsx(list("across" = pseudo_DEGs_allspots), 
+           keepNA=TRUE, na.string="NA", overwrite=TRUE,
+           file=paste0(result_dir,"Pseudobulk_across_DEGs.0.7.xlsx"))
+```
+
+## Session info
+```{r}
+sessionInfo()
+```
