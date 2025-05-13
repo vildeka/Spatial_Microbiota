@@ -30,7 +30,7 @@ knitr::opts_chunk$set(
   )
 # resolve functions with same name across packages
 select <- dplyr::select
-#  setwd("~/work/Brolidens_work/Projects/Spatial_Microbiota/src/Manuscript")
+#  setwd("~/work/Brolidens_work/Projects/Spatial_Microbiota/src")
 ```
 
 ```{r conda-env-setup}
@@ -107,24 +107,24 @@ theme_set(theme_cowplot())
 # set random seed for reproducibility
 set.seed(12345)
 
-source("../../bin/spatial_visualization.R")
-source("../../bin/plotting_functions.R")
+source("../bin/spatial_visualization.R")
+source("../bin/plotting_functions.R")
 
 #########
 # PATHS #
 #########
-input_dir <- "../../results/03_clustering_st_data/"
-result_dir <- "../../results/09_hdWGCNA/"
+input_dir <- "../results/03_clustering_st_data/"
+result_dir <- "../results/09_hdWGCNA/"
 if( isFALSE(dir.exists(result_dir)) ) { dir.create(result_dir,recursive = TRUE) }
 epi_clus <- "^5$|^6$|^7|^9" # non-filt
 
 #############
 # LOAD DATA #
 #############
-meta <- read_csv("../../data/ST-samples_metadata.csv")
-pseudo_DEGs <- readRDS("../../results/06_DGE_condition_st_data/Pseudobulk_across_DEGs.RDS")
-DEGs_table <- read_csv(paste0("../../results/06_DGE_condition_st_data/","DGEs_condition_wilcox.0.7.csv"))
-DATA <- readRDS(paste0("../../results/03_clustering_st_data/","seuratObj_clustered.RDS"))
+meta <- read_csv("../data/ST-samples_metadata.csv")
+pseudo_DEGs <- readRDS("../results/06_DGE_condition_st_data/Pseudobulk_across_DEGs.RDS")
+DEGs_table <- read_csv(paste0("../results/06_DGE_condition_st_data/","DGEs_condition_wilcox.0.7.csv"))
+DATA <- readRDS(paste0("../results/03_clustering_st_data/","seuratObj_clustered.RDS"))
 #DATA <- readRDS(paste0("/Users/vilkal/work/Brolidens_work/Projects/Spatial_Microbiota/results/07_sp_microbes/","seuratObj_microbes.RDS"))
 
 # 16S data
@@ -148,11 +148,12 @@ DEG_sig <- DEGs_table %>%
   filter(p_val_adj < 0.05) %>% 
   filter(!(grepl("^11$|$^12$", .$layers))) 
 
-# the WGCNA was run with 3880 genes 
-# should perhaps have run it without genes from cluster 9, then it would be 3185
+# the WGCNA was run with 3880 genes (all_Clus_4000DEGs) (it has 51 genes which are not significant and is missing 5 ACK genes)
+# another run only included the WILK genes (3185) 
+# Should run it one more time with All methods (WILK, PAIR and ACK) removing clus 11 and 12 (3771 genes)
 genes <- unique(DEG_sig$gene)
 
-# alterntive with union of pseudobulk and wilcox 
+# alternative with union of pseudobulk and wilcox 
 WILK <- DEGs_table %>%
   filter(!(grepl("^11$|$^12$", .$layers))) %>%
   filter(p_val_adj < 0.05) %>% .$gene %>% unique()
@@ -167,6 +168,7 @@ setdiff(PAIR, WILK)
 intersect(intersect(PAIR, WILK), ACK)
 
 genes <- c(PAIR, WILK, ACK) %>% unique()
+
 ```
 
 
@@ -206,12 +208,12 @@ DATA  <- NormalizeMetacells(DATA)
 ```{r Co-expression-network}
 # select specific region 
 # Submucosa
-DATA  <- SetDatExpr(
-  DATA,
-  assay = "RNA",
-  group.by="layers",
-  group_name = c("1", "4", "3", "2", "10")
-)
+# DATA  <- SetDatExpr(
+#   DATA,
+#   assay = "RNA",
+#   group.by="layers",
+#   group_name = c("1", "4", "3", "2", "10")
+# )
 
 # All spots
 # set up the expression matrix, set group.by and group_name to NULL to include all spots
@@ -227,12 +229,12 @@ DATA <- TestSoftPowers(DATA)
 plot_list <- PlotSoftPowers(DATA)
 
 p <- wrap_plots(plot_list, ncol=2)
-ggsave(filename=paste0("./Figures/03/", "SoftPower_treshold.png"),p,  width = 5, height = 4, bg = "white")
+ggsave(filename=paste0("./Figures/hdWGCNA/", "SoftPower_treshold.png"),p,  width = 5, height = 4, bg = "white")
 
 # construct co-expression network:
 DATA <- ConstructNetwork(
   DATA,
-  soft_power = 8,
+  soft_power = 9,
   tom_name='test',
   overwrite_tom=TRUE
 )
@@ -265,10 +267,11 @@ n_mods <- nrow(mod_color_df) - 1
 new_colors <- paste0(met.brewer("Archambault", n=n_mods)) # "Archambault", "Signac", "Peru1"
 
 # reset the module colors
-DATA <- ResetModuleColors(DATA, c("#ed968c","#f9d14a","#88a0dc","#e78429"))
+DATA <- ResetModuleColors(DATA, c("#88a0dc","#f9d14a","#ed968c","#e78429"))
+# DATA <- ResetModuleColors(DATA, c("#ed968c","#f9d14a","#88a0dc","#e78429"))
 
 # save the dendrogram
-png(paste0("./Figures/03/", "Dendo_all_layers.png"), width = 10, height = 3, units = "in", res = 300)
+png(paste0("./Figures/hdWGCNA/", "Spatial hdWGCNA dendrogram.png"), width = 10, height = 3, units = "in", res = 300)
 PlotDendrogram(DATA, main='Spatial hdWGCNA dendrogram')
 dev.off()
 ```
@@ -281,11 +284,13 @@ DATA <- ModuleConnectivity(DATA)
 # reset the module names with the prefix “SM” (spatial modules)
 DATA <- ResetModuleNames(DATA, new_name = "SM")
 
-# saveRDS(DATA, paste0(result_dir,"hdWGCNA_Seurat.RDS")) 
+# saveRDS(DATA, paste0(result_dir,"hdWGCNA_3771DEGs_Seurat.RDS")) 
 # DATA <- readRDS(paste0("../../results/09_hdWGCNA/all_Clus_4000DEGs/","hdWGCNA_Seurat.RDS"))
 
-write_csv(DATA@misc[["vis"]][["wgcna_modules"]], paste0(result_dir, "wgcna_all_Clus_modules.csv"))
-modules <- read_csv(paste0("../../results/09_hdWGCNA/all_Clus_4000DEGs/", "wgcna_all_Clus_modules.csv"))
+#write_csv(DATA@misc[["vis"]][["wgcna_modules"]], paste0(result_dir, "wgcna_all_Clus_modules.csv"))
+write_csv(DATA@misc[["vis"]][["wgcna_modules"]], paste0(result_dir, "wgcna_3771DEGs_modules.csv"))
+# modules <- read_csv(paste0("../../results/09_hdWGCNA/all_Clus_4000DEGs/", "wgcna_all_Clus_modules.csv"))
+modules <- read_csv(paste0("../../results/09_hdWGCNA/", "wgcna_3771DEGs_modules.csv"))
 ```
 
 ```{r add-modules-to-seurat}
@@ -301,13 +306,13 @@ DATA@meta.data <- cbind(DATA@meta.data, MEs)
 DATA <- DATA %>% left_join(., select(meta, ID, Nugent="Nugent_Score_v3"), by=c( "orig.ident"="ID"))
 
 mod_nest <- modules %>%
-  nest(data = -module)
+  nest(data = module)
 mod_nest
 ```
 
 ## Data visualization
 
-```{r plot-modules}
+```{r Modules_across_groups_UMAP, fig.width=10, fig.height=10}
 plot_filt.fun <- function(DATA, gr = "L1"){
   DAT <- filter(DATA, groups == gr)
   DAT@misc[["vis"]][["MEs"]] <- DATA@misc[["vis"]][["MEs"]][colnames(DAT),]
@@ -326,30 +331,34 @@ mod <- map(mod, ~plot_genes.fun(DATA,
                red="umapharmony", 
                lable = TRUE))
 
-g <- map(seq_along(mod), ~mod[[.x]] + facet_wrap(~groups, ncol = 4)) %>% wrap_plots(., ncol=1)
-ggsave(filename=paste0("./Figures/03/", "Modules_across_groups_ALL_clus.png"),g,  width = 10, height = 10, bg = "white")
+(g <- map(seq_along(mod), ~mod[[.x]] + facet_wrap(~groups, ncol = 4)) %>% wrap_plots(., ncol=1) )
+# ggsave(filename=paste0("./Figures/hdWGCNA/", "Modules_across_groups_UMAP.png"),g,  width = 10, height = 10, bg = "white")
 ```
 
 
-```{r visualization}
+```{r UMAP_module_groups, fig.width=15, fig.height=15}
 # make a featureplot of hMEs for each module
 plot_list <- DATA %>%
   ModuleFeaturePlot(., reduction = "umapharmony", features = "MEs") %>%
   wrap_plots(., ncol=4)
 
 # for each microbiota group
-plots <- sort(unique(DATA$groups)) %>%
+(plots <- sort(unique(DATA$groups)) %>%
   set_names() %>%
   imap(., ~plot_filt.fun(DATA, .x)) %>% 
   flatten() %>% 
   wrap_plots(., ncol=4, guides = "collect")  %>%
-  wrap_plots(plot_list, ., ncol=1, heights = c(.25,1)) 
-ggsave(filename=paste0("./Figures/03/", "UMAP_module_groups.png"),plots,  width = 15, height = 15, bg = "white")
+  wrap_plots(plot_list, ., ncol=1, heights = c(.25,1)) )
+# ggsave(filename=paste0("./Figures/hdWGCNA/", "UMAP_module_groups.png"),plots,  width = 15, height = 15, bg = "white")
+```
 
+```{r kME_ranked_genes, fig.width=11, fig.height=3}
 # plot genes ranked by kME for each module
 p <- PlotKMEs(DATA, ncol=5, text_size = 3 )
-ggsave(filename=paste0("./Figures/03/", "kME_ranked_genes.png"),p,  width = 11, height = 3, bg = "white")
+# ggsave(filename=paste0("./Figures/hdWGCNA/", "kME_ranked_genes.png"),p,  width = 11, height = 3, bg = "white")
+```
 
+```{r Group_contribution, fig.width=10, fig.height=3}
 # relative expression level of each module
 plot_list <- ModuleRadarPlot(
   arrange(DATA, layers),
@@ -359,35 +368,43 @@ plot_list <- ModuleRadarPlot(
   grid.label.size=4
 ) 
 (p <- wrap_plots(plot_list, ncol=4) & theme(title = element_text(size=8)) )
-ggsave(filename=paste0("./Figures/03/", "Group_contribution.png"),p,  width = 10, height = 3, bg = "white")
+# ggsave(filename=paste0("./Figures/hdWGCNA/", "Group_contribution.png"),p,  width = 10, height = 3, bg = "white")
 
+```
+
+```{r DotPlot_SM_representation, fig.width=7, fig.height=6}
 # plot with Seurat's DotPlot function
-mods <- levels(modules$module); mods <- mods[mods != 'grey']
-p <- DotPlot(DATA, features=rev(mods), group.by = 'layers', dot.min=0.1)
-p <- DotPlot(DATA, features=rev(mods), group.by = 'groups', dot.min=0.1)
-p <- DotPlot(DATA, features=rev(mods), group.by = 'Nugent', dot.min=0.1)
+mods <- unique(modules$module)[unique(modules$module) != 'grey']
+p <- c('groups', 'layers', 'Nugent') %>%
+  map(., ~DotPlot(DATA, features=rev(mods), group.by = .x, dot.min=0.1) )
 
 # flip the x/y axes, rotate the axis labels, and change color scheme:
-p <- p +
+p <- map(p,~.x +
   coord_flip() +
   RotatedAxis() +
   scale_color_gradientn(colours = c('blue','grey95', 'red'), name = "Avg. Expression",
                        limits = c(-1.5, 2.5), oob = scales::squish,
-                       values = scales::rescale(c(-1.5, 0, 2.5))) +
-  xlab('') + ylab('') + guides(col = guide_colourbar(barwidth = .5, barheight = 7 ))
+                       values = scales::rescale(c(-1.5, 0, 2.5))) + 
+    theme(legend.direction = "vertical", legend.box = "horizontal",
+          plot.margin = unit(c(.1, -0, -1, -0), "lines")) + # t,r,b,l
+    xlab('') + ylab('') + guides(col = guide_colourbar(barwidth = .5, barheight = 7 )) 
+)
 
-p
-ggsave(filename=paste0("./Figures/03/", "dotplot_layers_.png"),p,  width = 7, height = 2.5, bg = "white")
-ggsave(filename=paste0("./Figures/03/", "dotplot_groups.png"),p,  width = 4, height = 2, bg = "white")
-ggsave(filename=paste0("./Figures/03/", "dotplot_Nugent.png"),p,  width = 5, height = 2, bg = "white")
+# combine plots
+# dev.new(width=7, height=6, noRStudioGD = TRUE)
+plot_grid(p[[1]], p[[2]]+theme(legend.position = "none"), p[[2]]+theme(legend.position = "none"), ncol = 1)
 
-ggsave(filename=paste0("./Figures/03/", "dotplot_legend.png"),  width = 5, height = 7, bg = "white")
+# save plots
+#ggsave(filename=paste0("./Figures/hdWGCNA/", "dotplot_layers.png"),p[[2]],  width = 7, height = 2.5, bg = "white")
+#ggsave(filename=paste0("./Figures/hdWGCNA/", "dotplot_groups.png"),p[[1]],  width = 4, height = 2, bg = "white")
+#ggsave(filename=paste0("./Figures/hdWGCNA/", "dotplot_Nugent.png"),p[[3]],  width = 5, height = 2, bg = "white")
+
 ```
 
 
-```{r MEs-on-tissue}
-# dev.new(height=12.5, width=12.5, noRStudioGD = TRUE)
-mods <- mods %>% set_names()
+```{r MEs-on-tissue, fig.width=7, fig.height=7}
+# dev.new(height=7, width=7, noRStudioGD = TRUE)
+mods <- as.character(mods) %>% set_names()
 p <- map(mods, ~plot_spatial.fun(
           #DATA@misc[["vis"]][["wgcna_metacell_obj"]],
           DATA, 
@@ -399,16 +416,17 @@ p <- map(mods, ~plot_spatial.fun(
           alpha = 1,
           ncol = 4,
           #max_val = 100,
-          point_size = .5,
+          point_size = .15,
           save_space = F,
           img_alpha = 0,
           #colors = col_feat, # lightgray
           zoom = NULL ) )
 
-iwalk(p, ~ggsave(filename=paste0("./Figures/03/", .y,"_tissue.png"),.x,  width = 12.5, height = 12.5, bg = "white"))
+ggsave(paste0("./Figures/hdWGCNA/","Modules_on_tissue", ".pdf"), height = 7, width = 7,
+       gridExtra::marrangeGrob(grobs=p, ncol=1, nrow=1, top=NULL) )
 ```
 
-```{r line-graph}
+```{r line-graph, fig.width=25, fig.height=5}
 # pick out a few modules of interest here
 modules_of_interest = c("SM1", "SM2", "SM3", "SM4")
 
@@ -416,6 +434,7 @@ modules_of_interest = c("SM1", "SM2", "SM3", "SM4")
 submod = DATA@misc[["vis"]][["wgcna_modules"]] %>%
   subset(module %in% modules_of_interest) 
 
+# Get average expression across genes for each SM
 m_obj <- DATA@misc[["vis"]][["datExpr"]][,submod$gene_name] %>%
   rownames_to_column(var = "barcode") %>%
   pivot_longer(-barcode) %>%
@@ -425,22 +444,9 @@ m_obj <- DATA@misc[["vis"]][["datExpr"]][,submod$gene_name] %>%
   summarise(avg_exp = mean(value), .by = c("name","module", "layers", "ID", "groups")) %>%
   mutate(ID_ = paste0(.$ID, .$groups, .$layers))
 
-# Get normalized expression for those genes
-# expr_normalized[1:5,1:10]
-#>                       B-3      B-4      B-5      L-3      L-4      L-5      S-3
-#> AC149818.2_FG001 7.600901 7.077399 7.803434 7.220840 7.410408 8.028223 7.160846
-#> AC149829.2_FG003 8.782014 8.179876 7.900062 8.299778 7.529891 8.631731 8.055118
-#> AC182617.3_FG001 8.047244 7.120668 6.885533 7.501391 7.279413 7.809565 7.184253
-#> AC186512.3_FG001 6.901539 7.389644 6.975945 6.859593 7.370816 6.633722 7.798843
-#> AC186512.3_FG007 7.919688 7.754506 7.670946 7.417760 7.988427 7.904850 7.484542
-#>                       S-4      S-5   B_L1.1
-#> AC149818.2_FG001 7.401382 7.345322 6.524435
-#> AC149829.2_FG003 8.744502 8.142909 8.240407
-#> AC182617.3_FG001 8.140134 6.972400 7.777347
-#> AC186512.3_FG001 6.949501 6.952659 6.059033
-#> AC186512.3_FG007 8.375664 7.762799 6.335663
-col <- c("#ed968c","#f9d14a","#88a0dc","#e78429")
-p <- m_obj %>% 
+
+col <- c("#88a0dc","#f9d14a","#ed968c","#e78429")
+(p <- m_obj %>% 
   #filter(layers == "Basal") %>%
   #filter(avg_exp > 1) %>%
   arrange(layers) %>%
@@ -459,15 +465,15 @@ p <- m_obj %>%
   #facet_wrap(~module + layers)
   facet_grid(rows = vars(module)) +
   labs(x = "treatment",
-       y = "normalized expression")
+       y = "normalized expression") )
 
-ggsave(filename=paste0("./Figures/03/", "expression_lines_DEGs.png"),p,  width = 15, height = 5, bg = "white")
+ggsave(filename=paste0("./Figures/hdWGCNA/", "Expression_lines_DEGs.png"),p,  width = 25, height = 5, bg = "white")
 ```
 
 
 ## visualize the co-expression network using UMAP
 
-```{r}
+```{r co-expression-network-UMAP, fig.width=12, fig.height=10}
 # perform UMAP embedding on the co-expression network
 DATA <- RunModuleUMAP(
   DATA,
@@ -479,7 +485,11 @@ DATA <- RunModuleUMAP(
 
 # make the network plot
 # can also return igraph object which can be manipulated by tidygraph
-pdf(paste0("./Figures/03/", "WGCNA_UMAP_.pdf"),  width = 12, height = 15)
+# dev.new(width=12, height=10, noRStudioGD = TRUE) 
+pdf(paste0("./Figures/hdWGCNA/", "WGCNA_UMAP.pdf"),  width = 12, height = 12)
+# Margins area
+par(oma=c(0,0,0,0)) #bltr
+par(mar=c(0,0,0,2))
 ModuleUMAPPlot(
   DATA,
   edge.alpha=0.5,
@@ -489,118 +499,12 @@ ModuleUMAPPlot(
   return_graph = FALSE,
   edge_prop=0.075, 
   label_hubs=7 
-)
+) 
 dev.off()
 ```
 
 
-```{r Module-Trait-Correlation}
-
-cur_traits <- c("Nugent", "sexwork_months","age", "Estradiol")
-cur_bact <- c('L. crispatus/acidophilus','L. iners','L. jensenii',
-       'L. gasseri/johnsonii/taiwanensis','L. reuteri/oris/frumenti/antri',
-        'Gardnerella','Prevotella','Atopobium','Sneathia','Megasphaera','Streptococcus',
-        'Anaerococcus','Escherichia/Shigella','Dialister','Mycoplasma',
-        'Bifidobacterium', 'Citrobacter/Klebsiella')
-
-bact <- datasets[["ASV_Luminal_raw_counts"]] %>% 
-   pivot_longer(-1, names_to = "ID") %>% 
-   mutate(Genus_taxa_luminal = ifelse(.$Genus_taxa_luminal %in% cur_bact, .$Genus_taxa_luminal, "other")) %>%
-   summarize(value = sum(value), .by = c("Genus_taxa_luminal", "ID")) %>%
-   group_by( ID ) %>%
-   mutate(value = value/sum(value)) %>%
-   filter(ID %in% sample_id) %>%
-   pivot_wider(id_cols=ID, names_from = "Genus_taxa_luminal")
-
-DATA <- DATA %>% 
-  select(-any_of(cur_traits), -any_of(cur_bact)) %>%
-  left_join(., select(meta, ID, Nugent="Nugent_Score_v3", sexwork_months, age, Estradiol="Plasma_S_Estradiol_pg_mL_v3"), by=c( "orig.ident"="ID")) %>% 
-  left_join(., bact, by=c( "orig.ident"="ID"))
-
-# if any of the traits are categorical they need to be made into factors
-# it only makes sense to use categorical values if they only have two categories or they represent a squential specter of something
-# DATA <- DATA %>%
-#   mutate(across(any_of(cur_traits), ~factor(.x)))
-
-
-get_trait_corr.fun <- function(cur_traits, gr = 'layers', star = F, cor_val = F){
-
-  DATA <- ModuleTraitCorrelation(
-    DATA,
-    cor_method = "spearman",
-    traits = cur_traits,
-    group.by=gr
-  )
-  
-  # get the mt-correlation results
-  mt_cor <- GetModuleTraitCorrelation(DATA)
-  
-  t(head(mt_cor$cor$Superficial))
-  
-  # P <- PlotModuleTraitCorrelation(
-  #   DATA,
-  #   label = 'fdr',
-  #   label_symbol = 'stars',
-  #   text_size = 2,
-  #   text_digits = 2,
-  #   text_color = 'white',
-  #   high_color = 'red',
-  #   mid_color = 'white',
-  #   low_color = '#0D8CFF',
-  #   plot_max = 0.2,
-  #   combine=F
-  # )
-  
-  # ComplexHeatmap
-  col <- rev(c("#B2182B","#D6604D","#F4A582","#FDDBC7","#F7F7F7","#D1E5F0","#92C5DE","#4393C3","#2166AC"))
-  library("ComplexHeatmap")
-  P <- layers[1:11] %>%
-    set_names() %>%
-    imap(., ~Heatmap(na.omit(mt_cor$cor[[.x]]),
-                     #col =circlize::colorRamp2(c(1, .75, .5, .25, 0, -.25, -.5, -.75, -1), rev(col)),
-                     col =circlize::colorRamp2(c(1,.5, 0, -.5, -1),hcl_palette ="RdBu", reverse = T), 
-                     show_row_dend = F, show_column_dend = F, 
-                     column_names_side = "top", column_names_rot = 0, 
-                     name = .y,
-                     column_names_centered = T,
-                     
-                     cell_fun = stars <- function(j, i, x, y, w, h, fill) {
-                       # add value to min and max cor value:
-                       if(cor_val){
-                         if(!is.na(mt_cor$cor[[.x]][i, j]) & mt_cor$cor[[.x]][i, j] == max(mt_cor$cor[[.x]], na.rm = T)) {
-                           grid.text( round(max(mt_cor$cor[[.x]], na.rm = T), digits=1), x, y)}
-                         if(!is.na(mt_cor$cor[[.x]][i, j]) & mt_cor$cor[[.x]][i, j] == min(mt_cor$cor[[.x]], na.rm = T)) {
-                           grid.text(round(min(mt_cor$cor[[.x]], na.rm = T), digits=1), x, y)}
-                         }else{NULL} 
-                       # add significans stars:
-                       if(star){
-                                                    if(mt_cor$fdr[[.x]][i, j] < 0.001) {
-                                                      grid.text("***", x, y)}
-                                                    else if(mt_cor$fdr[[.x]][i, j] < 0.01) {
-                                                      grid.text("**", x, y)}
-                                                    }else{NULL} }
-                     ) )
-  l <- Legend(col_fun = circlize::colorRamp2(c(1,.5, 0, -.5, -1),hcl_palette ="RdBu"),
-              legend_height = unit(7, units = "cm"), legend_width = unit(.5, units = "cm"))
-  
-  H_grob <- map(layers[1:11], ~grid.grabExpr(draw(P[[.x]], column_title=.x, show_heatmap_legend = FALSE)) ) 
-  
-  p <- wrap_plots(c(H_grob, list(grid.grabExpr(draw(l)))), ncol = 4, heights = 4)
-  return(tibble(plot = list(p), cor_df = list(mt_cor)))
-}
-
-p <- get_trait_corr.fun(cur_bact, star = F, cor_val = T)
-p <- get_trait_corr.fun(cur_traits, star = F, cor_val = T)
-p <- get_trait_corr.fun(cur_enrich, star = F, cor_val = T, gr = 'groups')
-p$plot
-
-ggsave("./Figures/03/ModuleTraitCor_Bact.png", p$plot[[1]], width = 17, height = 15, limitsize = F, bg="white")
-ggsave("./Figures/03/ModuleTraitCor_Var.png", p$plot[[1]], width = 12, height = 10, limitsize = F, bg="white")
-
-
-```
-
-```{r trait-correlation}
+```{r trait-correlation, eval=FALSE}
 group1 <- DATA %>% filter(layers == "1" & groups == "L1") %>% colnames
 group2 <- DATA %>% filter(layers == "1" & groups == "L4") %>% colnames
 group2 <- DATA %>% filter(layers == "Superficial" & groups == "L3") %>% colnames
@@ -632,11 +536,11 @@ PlotDMEsVolcano(
 ```{r Hubb-gene-networks}
 ModuleNetworkPlot(
   DATA,
-  outdir = './Figures/03/ModuleNetworks'
+  outdir = './Figures/hdWGCNA/ModuleNetworks'
 )
 
 # all modules
-pdf(paste0("./Figures/03/", "Hub_network_all.pdf"), width = 12, height = 15)
+pdf(paste0("./Figures/hdWGCNA/", "Hub_network_all.pdf"), width = 12, height = 15)
 HubGeneNetworkPlot(
   DATA,
   n_hubs = 7, n_other=20,
@@ -648,7 +552,7 @@ dev.off()
 # single module
 mod <-  c("SM1", "SM2", "SM3", "SM4") 
 Hub_network.fun <- function(module, bg="white"){
-  png(paste0("./Figures/03/", "Hub_network_",module,"_15.png"), width = 8, height = 5, units = "in", res=300, bg=bg) # bg = "transparent",
+  
   HubGeneNetworkPlot(
     DATA,
     n_hubs = 15, n_other=30,
@@ -658,9 +562,12 @@ Hub_network.fun <- function(module, bg="white"){
     mods = module,
     wgcna_name = "vis"
   )
-  dev.off()
+
 }
+pdf(paste0("./Figures/hdWGCNA/", "Hub_network_15.pdf"), 
+    width = 8, height = 5,  bg = "transparent") 
 map(mod, ~Hub_network.fun(.x, bg = "transparent"))
+dev.off()
 ```
 
 ```{r enrichR}
@@ -681,7 +588,7 @@ enrich_df <- GetEnrichrTable(DATA) %>%
 
 enrich_df %>%
   map(., ~split(.x, ~module)) %>%
-  imap(., ~write.xlsx(.x, paste0(result_dir,"all_Clus_4000DEGs/", "Enrichment_",.y,".xlsx")) )
+  imap(., ~write.xlsx(.x, paste0(result_dir,"New_3771DEGs/", "Enrichment_",.y,".xlsx")) )
 
 # saveRDS(enrich_df, paste0("../../results/09_hdWGCNA/all_Clus_4000DEGs/", "Enrichment.RDS"))
 # enrich_df <- readRDS(paste0("../../results/09_hdWGCNA/all_Clus_4000DEGs/", "Enrichment.RDS"))
@@ -690,170 +597,72 @@ enrich_df %>%
 # make GO term plots:
 EnrichrBarPlot(
   DATA,
-  outdir = paste0("./Figures/03/","enrichr_plots"), # name of output directory
+  outdir = paste0("./Figures/hdWGCNA/","enrichr_plots"), # name of output directory
   n_terms = 10, # number of enriched terms to show (sometimes more show if there are ties!!!)
   plot_size = c(5,7), # width, height of the output .pdfs
   logscale=TRUE # do you want to show the enrichment as a log scale?
 )
 
-ggsave(filename=paste0("./Figures/03/", "enrichment_DEGs.pdf"), width = 6, height = 4)
+# ggsave(filename=paste0("./Figures/hdWGCNA/", "enrichment_DEGs.pdf"), width = 6, height = 4)
 ```
 
-
-```{r GeneRatio_plot_per_cluster}
-#################################
-# GESA GENE RATIO PLOT FUNCTION #
-################################
-library(ggh4x)
+```{r Enrichment-plot, fig.width=12, fig.height=4}
+#######################
+# ENRICHMENT BARPLOT #
+#######################
 overlap.fun <- function(string){
   l <- str_split(string, pattern ="/")
   l <- map_dbl(l, ~as.numeric(.x[1])/as.numeric(.x[2]) )
   return(l)}
 
 # str_match("cytoplasmic translation (GO:0002181)", "^(.+?)\\s\\((.+)\\)$")[2]
-GeneRatio_plot.fun <- function(enrich_df, txt_size = 15, nr_path=10,
-                               col=rev(c("#e31a1c","#fd8d3c","#fecc5c","#ffffb2"))){
-  dot_df <- enrich_df %>% # df<- GR_plots[["fgseaRes"]][[10]] %>%
-    mutate("Term" = str_match(.$Term, "^(.+?)\\s\\((.+)\\)$")[,2], 
-           "GOid" = str_match(.$Term, "^(.+?)\\s\\((.+)\\)$")[,3] ) %>%
+GeneRatio_plot.fun <- function(enrich_df, txt_size = 15, nr_path=3,
+                               col=c("#ed968c","#f9d14a","#88a0dc","#e78429")){
+  dot_df <- enrich_df %>%  # dot_df <- enrich_df$GO_Biological_Process_2021 %>%
+    {if(grepl("GO",.$Term[[1]])){mutate(., "Term" = str_match(.$Term, "^(.+?)\\s\\((.+)\\)$")[,2], 
+           "GOid" = str_match(.$Term, "^(.+?)\\s\\((.+)\\)$")[,3] )}else .} %>%
     filter(Adjusted.P.value < 0.05) %>%
-    mutate(GeneRatio = overlap.fun(.$Overlap)) 
+    mutate("-log10(P-value)" = -log10(P.value)) %>%
+    mutate(GeneRatio = overlap.fun(.$Overlap)*100) 
   
-  pathways <- dot_df %>% 
-    {. ->> enrich_df_comb} %>%
-    group_by(module) %>% 
-    top_n(., nr_path, Combined.Score) %>% pull(., "Term")
   dot_df <- dot_df %>%
-    mutate(GO_gr = paste0("GO_", .$module)) %>%
-    filter(Term %in% pathways)
-  design <- "AA#####
-             #BB####
-             ##CC###
-             ###DDD#"
-  p <- ggplot(dot_df, aes(x = Combined.Score, y = fct_reorder(Term, GeneRatio))) + 
-                 geom_point(aes(size = Adjusted.P.value, color = GeneRatio)) + # ,lineheight = 0.5
-                 theme_bw(base_size = 14) +
-          #scale_y_discrete(labels = function(x) str_wrap(x, width = 35)) +
-          #scale_size_continuous(breaks = c(.25, .50, .75, 1), limits = c(0,1)) +
-          #scale_colour_gradientn(limits=c(0, 0.05), colours = col) +
-          scale_colour_gradientn(limits=c(0, 1), colours = col) +
-          scale_size(trans = 'reverse') +
-          ylab(NULL) + 
-          # scale_x_continuous(expand = c(.02, .02), n.breaks = 3) + #xlim(c(0, 0.5)) +
-          ggtitle(paste0("GO pathway enrichment") ) +
-          theme(plot.title = element_text(hjust = 1, size = txt_size-1.5),
-                plot.margin =  unit(c(.1,.2,.1,0), "cm"), # trbl
-                legend.spacing = unit(0, "lines"),
-                #text = element_text(size = txt_size),
-                axis.title.x = element_text(size = txt_size-2),
-                axis.text.y = element_text(lineheight = 0.7)) +
-    facet_grid2(GO_gr ~ module, scales = "free", render_empty = FALSE, ) +
-    #facet_manual(vars(module), scales = "free", design = design)
+    group_by(module) %>% 
+    top_n(., -nr_path, Adjusted.P.value) 
+  
+  p <- ggplot(dot_df, aes(x = `-log10(P-value)`, y = fct_reorder(Term, `-log10(P-value)`), fill = module, col = module)) +
+    geom_col(width = .05, show.legend = F) +
+    geom_point(aes(size = GeneRatio)) + theme_classic() + 
+    scale_fill_manual(values = col, aesthetics = c("fill", "colour")) +
     
-    theme(text = element_text(size = 15),
-          strip.background =   element_blank(), # removes facet labels
-          # strip.text.x =       element_blank() # removes facet labels)
-          ) 
+    facet_wrap(~module, scales = 'free', ncol = 1) +
+    #scale_x_continuous(expand = c(0, 1.5)) +
+    coord_cartesian(clip = F) +
+    scale_x_continuous(limits = function(x){c(0, +max(0.1, x))}) +
+    scale_size_continuous(breaks = c(10, 50, 80)) +
+    theme(axis.title.y = element_blank(),
+          legend.position = "none",
+          strip.text.x = element_text(hjust = 0.1, margin=margin(l=0)),
+          strip.background = element_blank(),
+          panel.spacing = unit(0, "cm"),
+          panel.border = element_blank())
   return(p)
 }
 
-(e_plot <- enrich_df %>%
-    bind_rows(., .id = "module") %>%
-    GeneRatio_plot.fun(., nr_path = 5))
 
-enrich_df_comb <- enrich_df_comb %>%
-  split(~module)
-SM3 <- c("negative regulation of serine-type peptidase activity","peptidyl-cysteine S-nitrosylation",
-         "hemidesmosome assembly","peptide cross-linking","keratinocyte differentiation","regulation of phospholipase A2 activity", "regulation of potassium ion import","regulation of peptidase activity", "prostanoid metabolic process", "negative regulation of peptidase activity","positive regulation of response to wounding", "cellular response to interleukin-12", "negative regulation of endopeptidase activity",
-         "response to molecule of bacterial origin", "neutrophil mediated immunity", "response to lipid")
-SM1 <- c("peptide biosynthetic process","negative regulation of ubiquitin protein ligase activity","regulation of dendritic cell apoptotic process", "complement activation, classical pathway", "positive regulation of regulatory T cell differentiation")
-SM2 <- c("positive regulation of focal adhesion assembly")
+p1 <- GeneRatio_plot.fun(enrich_df$Transcription_Factor_PPIs) 
+p2 <- GeneRatio_plot.fun(enrich_df$GO_Biological_Process_2021) 
+p3 <- GeneRatio_plot.fun(enrich_df$KEGG_2021_Human) 
 
-```
+# dev.new(width=12, height=4, noRStudioGD = TRUE) 
+(plot <- wrap_plots(p1,p2,p3, ncol = 3 ) )
 
-
-
-```{r}
-# not used 
-df <- enrich_df %>%
-  mutate(GeneRatio = overlap.fun(.$Overlap)) %>%
-  # mutate("Term" = str_match(.$Term, "^(.+?)\\s\\((.+)\\)$")[,2], 
-  #        "GOid" = str_match(.$Term, "^(.+?)\\s\\((.+)\\)$")[,3] ) %>%
-  mutate(log_p_value = -log10(Adjusted.P.value)) %>%
-  mutate(GeneRatio = ifelse(Adjusted.P.value < 0.05, .$GeneRatio, NA)) %>%
-  arrange(match(db, dbs)) %>%
-  mutate(Order = row_number())
-
-# Generate the plot
-ggplot(df, aes(x = Order, y = log_p_value, size = GeneRatio, color = db)) +
-  geom_point(alpha = 0.6) +
-  scale_size(range = c(2, 10)) +  # Adjust the size range
-  theme_minimal() +
-  theme(
-    axis.text.x = element_blank(),  # Rotate x-axis labels
-    panel.grid.major = element_blank(),
-    panel.grid.minor = element_blank()
-  ) +
-  labs(
-    x = NULL,
-    y = expression(-log[10](adjusted~P~value)),
-    title = "Bubble Plot"
-  ) +
-  guides(color = "none")  +# Remove color legend
-  facet_wrap(~module, ncol = 1)
-
-```
-
-
-```{r}
-# https://smorabit.github.io/hdWGCNA/index.html
-
-DEGs_nest <- DEGs_table %>%
-  filter(p_val_adj <= 0.05) %>%
-  filter(!(grepl("^11$|$^12$", .$layers))) %>%
-  nest(data = -comb)
-
-DEGs_nest %>%
-  filter(comb == "L2-L4") %>%
-  unnest(cols = c(data)) %>%
-  nest(data = -layers)
-```
-
-
-```{r}
-pseudo_DEGs <- pseudo_DEGs %>%
-  mutate(genes = pmap(., ~..2[["symbol"]][1:..3]))
-
-DEGs <- unique(unlist(pseudo_DEGs$genes))
-DEGs <- pseudo_DEGs$genes[[3]]
-
-VariableFeatures(DATA) <- DEGs
-
-DATA <- DATA %>%
-  filter(layers == "Basal")
-  ScaleData(verbose = FALSE, features = DEGs ) %>%
-  RunPCA(verbose = FALSE, npcs = 50, features = DEGs) %>%
-  RunUMAP(dims = 1:50, 
-          n.neighbors = 10,
-          min.dist = .1,
-          spread = 1,
-          repulsion.strength = 1,
-          negative.sample.rate = 10,
-          n.epochs = 100,
-          reduction = "pca",
-          reduction.name = "umapDEGs")
-
-VizDimLoadings(DATA, dims = 1:2, reduction = "pca")
-DimHeatmap(DATA, dims = 5, cells = 500, balanced = TRUE)
-ElbowPlot(DATA)
-  
-DimPlot(DATA, reduction = "umapDEGs")
+# ggsave(paste0("./Figures/hdWGCNA/", "Enrichment.png"),plot,  width = 11, height = 3, bg = "white")
 ```
 
 ```{r barplot-function}
-########################################
-# OVERLAPING GENES BETWEEN SM AND DEGs #
-########################################
+#####################################################
+# OVERLAPING GENES BETWEEN SPATIAL MODULES AND DEGs #
+#####################################################
 # Get all combinations of layers
 overlap_barplot.fun <- function(DEGs){
   DEGs_list <- map(DEGs, ~set_names(.x$gene, .x$Regulation)) #map(DEGs, ~pull(.x, "gene"))
@@ -901,7 +710,7 @@ overlap_barplot.fun <- function(DEGs){
 ```
 
 
-```{r DEG-module-overlap}
+```{r DEG-module-overlap, fig.width=14, fig.height=12}
 DEG_list <- DEGs_table %>%
   filter(p_val_adj < 0.05) %>% 
   filter(!(grepl("^11$|$^12$", .$layers))) %>%
@@ -920,191 +729,11 @@ overlap <- names(DEG_genes) %>%
   map(., ~overlap_barplot.fun(DEG_genes[[.x]])) %>%
   bind_rows(., .id = "comb") 
   
-p <- wrap_plots(overlap$plot, ncol = 1)
+# dev.new(width=14, height=12, noRStudioGD = TRUE) 
+(p <- wrap_plots(overlap$plot, ncol = 1))
 
-ggsave(paste0("./Figures/03/","barchart_pseudo_DEGs.png"),p, width = 14, height = 12)
-#######################
-# PLOTS VENN DIAGRAM #
-######################
-# remotes::install_github("vqf/nVennR")
-library(nVennR)
-d <- plotVenn(list(DEG_list$`L3-L4`$gene, module_genes$SM1), 
-         sNames = c("L3xL4", "SM4"),
-         outFile=paste0("./Figures/03/", "Venn_SM1_L3xL4_sig.svg")
-         )
-```
-
-```{r gene-heatmap, fig.width=3.5, fig.height=7.48}
-library(ComplexHeatmap)
-library(circlize)
-
-#### GENES THAT ARE UNIQELY OVERLAPING ####
-getVennOverlap <- function(lsvenn) {
-  
-  ItemsList <- gplots::venn(lsvenn, show.plot = FALSE)
-  print(lengths(attributes(ItemsList)$intersections))
-  return(attributes(ItemsList)$intersections)
-}
-
-################
-# PLOT HEATMAP #
-################
-heatmap.fun <- function(genes, group, cluster){
-###############
-# GET MATRIX #
-###############
-DAT <- filter(DATA, grepl(paste0(group, collapse="$|^"), DATA$groups))
-DAT <- filter(DAT, grepl(paste0("^",cluster,"$",collapse="|"), DAT$layers))
-VariableFeatures(DAT) <- genes
-DAT <- Seurat::ScaleData(DAT)
-matx <- DAT@assays$RNA$scale.data %>% 
-  as.matrix()
-  
-  
-##############
-# ANNOTATION #
-##############
-annot_col <<- DAT@meta.data %>%
-  arrange(., layers) %>%
-  # mutate(layers = factor(.$layers, levels = unique(.$layers))) %>%
-  dplyr::select(1:7) 
-
-# set row order
-matx <- matx[genes, rownames(annot_col)]
-# print( dput(rownames(matx)))
-#col_order <<- rownames(arrange(annot_col, layers) )
-
-# set colnames
-# colnames(matx) = NULL # removes them 
-# column_labels = structure(str_extract(colnames(matx), "P\\d\\d\\d"), names = colnames(matx))
-
-clus_cols <- c("#E41A1C","#FF7F00","#C77CFF","#984EA3",
-               "#00A9FF","#377EB8","#CD9600","#7CAE00","#e0e067","#FF61CC","#FF9DA7","#BAB0AC","#A65628")
-clus <- c("Superficial","Upper IM","Lower IM","Basal","1","4","0","3","2","9","10","11", "12") #
-clus_cols <- set_names(clus_cols, clus)
-clus_cols <- clus_cols[unique(annot_col$layers)]
-
-ID_cols <- c("#4E79A7","#F28E2B","#E15759","#76B7B2","#59A14F","#EDC948","#9C755F","#B07AA1","#FF9DA7",
-             "#E78AC3","#7FC97F","#BEAED4","#BAB0AC","#FDC086","#FFFF99","#386CB0","#F0027F","#BF5B17",
-             "#66C2A5","#FC8D62","#8DA0CB")
-ID_cols <- set_names(ID_cols, sample_id)
-ID_cols <- ID_cols[unique(annot_col$orig.ident)]
-
-group_cols <- c("#56B4E9","#009E73","#CC79A7","#FC8D62")
-gr <- c('L1', 'L2', 'L3', 'L4') %>% set_names()
-group_cols <- set_names(group_cols, gr)
-group_cols <- group_cols[unique(annot_col$groups)]
-
-################
-# DRAW HEATMAP #
-################
-
-# qwartile 
-q <- quantile(matx, c(0.05, 0.95))
-c(min(matx), max(matx))
-
-# average expression:
-set.seed(123)
-H <- Heatmap(matx, name = " ",
-             col = circlize::colorRamp2(c(q[1]*2, q[1], 0, q[2], q[2]*2), 
-                                        c("#440154FF", "#6A51A3", "#21908CFF", "#FDE725FF","#FF7F00")),
-             #row_km = 6, #column_km = 2, # kmeans change every time you run it
-             column_split =  factor(as.character(annot_col$layers), levels = cluster),
-             #column_split =  factor(as.character(annot_col$groups), levels = gr),
-             
-             #row_split = 10,  # hierarchical static
-             #row_order = rownames(matx),
-             cluster_rows = F,
-             #column_order = rownames(arrange(annot_col, groups) ),
-             show_column_names = FALSE,
-             show_row_dend = FALSE,
-             show_column_dend = FALSE,
-             cluster_columns = T,
-             
-             # text
-             row_title = gt_render("", padding = unit(c(0, 0, 0, 0), "pt")),
-             
-             #column_labels = gt_render(column_labels, padding = unit(c(0, 0, 0, 0), "pt")),
-             column_title_gp = grid::gpar(fontsize = 8),
-             #column_labels_gp =  grid::gpar(fontsize = 8),
-             
-             column_names_gp = grid::gpar(fontsize = 8),
-             row_names_gp = grid::gpar(fontsize = 8),
-            
-             
-             # annotation
-             # right_annotation = right_anno_row, left_annotation = left_anno_row,
-             top_annotation =
-               columnAnnotation(Cluster=annot_col$layers,
-                                Group=annot_col$groups,
-                                #ID=annot_col$orig.ident,
-                                
-                                #show_legend = FALSE,
-                                show_annotation_name = F,
-                                annotation_legend_param =
-                                  list(grid_height = unit(.2, "mm"),
-                                       grid_width = unit(2, "mm"), title = "",
-                                       labels_gp = gpar(fontsize = 7),
-                                       title_gp = gpar(fontsize = 8)),
-                                simple_anno_size = unit(.4, "cm"),
-                                #gap = unit(1, "cm"),
-                                col=list( Cluster= clus_cols, 
-                                          Group= group_cols,
-                                          ID=  ID_cols
-                                          )
-                                ),
-
-             # legend
-             heatmap_legend_param = list(legend_height = unit(20, "mm"), grid_width = unit(2, "mm"), 
-                                         labels_gp = gpar(fontsize = 7))
-             #annotation_legend_param = list(size = unit(2, "mm"))
-
-             ) #colorRampPalette(c(col))(10) 
-
-# set.seed(1) Tassos seed
-H <- draw(H, merge_legend = TRUE)
-return(H)
-}
-# Heatmap global options:
-ht_opt$COLUMN_ANNO_PADDING = unit(.05, "cm")
-ht_opt$HEATMAP_LEGEND_PADDING = unit(0, "cm")
-ht_opt$TITLE_PADDING = unit(.05, "cm")
-ht_opt$DIMNAME_PADDING = unit(.05, "cm")
-
-layers <- c("Superficial","Upper IM","Lower IM","Basal","1","4","0","3","2","9","10") #
-gr <- c('L1', 'L2', 'L3', 'L4') 
-
-# all clusters together: 
-# genes <- c(top20_epi$gene, top20_sub$gene)
-# H <- heatmap.fun(genes = genes, lvl_layers)
-
-##############
-# EPITHELIUM #
-##############
-lvl <- str_split_1(overlap$comb[[3]], pattern = "-")
-genes <- overlap$genes[[3]] %>% arrange(Regulation, layers) %>% filter(., SM == "SM2") %>% 
-  #filter(avg_log2FC <= -.7 | avg_log2FC <= 0.7) %>% 
-  group_by(Regulation, layers) %>%
-  top_n(10, abs(avg_log2FC)) %>%
-  pull(., "intersections") %>% unique()
-H_epi <- heatmap.fun(genes = genes, gr, layers[lvl])
-
-# save file
-H_grob <- grid.grabExpr(draw(H_epi, merge_legend = TRUE))  # show_heatmap_legend = FALSE,
-ggsave("./Figures/heatmap_clusters_epi.png", H_grob, width = 6, height = 3, limitsize = F)
-
-#############
-# SUBMUCOSA #
-#############
-genes <- p$genes[[5]] %>% arrange(Regulation, layers) %>% filter(., SM == "SM2") %>% filter(avg_log2FC <= -.7 | avg_log2FC >= .7) %>% pull(., "intersections") %>% unique()
-genes <- mod_nest$data[[4]]$gene_name
-genes <- str_split(enrich_df[["SM3"]]$Genes, pattern = ";") %>% unlist() %>% unique()
-genes <- str_split_1("CFD;CST3;CD63;CYB5R3;GSN;NPC2;PSAP;TIMP2;CTSD;FTL;CTSB;GSN;ITGB5;LUM;LAMB2;MMP2;HTRA1;BGN;PLOD1;DCN;CTSK;COL6A2;BSG;MFAP2;TIMP2;TIMP1;PPIB;GAS6;GGT5;CHPF;LUM;BGN;PRELP;FMOD;DCN", pattern = ";")
-H_sub <- heatmap.fun(genes, gr, layers[5:9])
-
-# save file
-H_grob <- grid.grabExpr(draw(H_sub, merge_legend = TRUE))  # show_heatmap_legend = FALSE,
-ggsave("./Figures/heatmap_clusters_sub.png", H_grob, width = 6, height = 4, limitsize = F)
-# NB! when working with the heatmap, make sure output is printed to the console
+# ggsave(paste0("./Figures/hdWGCNA/","barchart_WILK_DEGs.png"),p, width = 14, height = 12)
 
 ```
+
+
