@@ -1,6 +1,6 @@
 # The cervicovaginal microbiome impacts spatially restricted host transcriptional signatures across the human ectocervical epithelium and submucosa
 
-Vilde Kaldhusdal, Mathias Franzen Boger, Adam D. Burgener, Frideborg Bradley, Julie Lajoie, Kenneth Omollo, Joshua Kimani, Annelie Tjernlund, Keith Fowke, Gabriella Edfeldt and Kristina Broliden
+Vilde Kaldhusdal, Mathias Franzen Boger, Adam D. Burgener, Julie Lajoie, Kenneth Omollo, Joshua Kimani, Annelie Tjernlund, Keith Fowke, Douglas S. Kwon, Gabriella Edfeldt and Kristina Broliden
 
 ![](./resources/Graphical%20abstract.png)
 
@@ -27,24 +27,23 @@ This project used multiple datasets:
 
 ### Analysis scripts
 
-0.  [00_load_st_data](https://vildeka.github.io/Spatial_DMPA/00_load_st_data)
-1.  [01_QC_st_data](https://vildeka.github.io/Spatial_DMPA/01_QC_st_data)
-2.  [02_integrate_st_data](https://vildeka.github.io/Spatial_DMPA/02_integrate_st_data)
-3.  [03_clustering_st_data](https://vildeka.github.io/Spatial_DMPA/03_clustering_st_data)
-4.  [04_deconvolute_st_data](https://vildeka.github.io/Spatial_DMPA/04_deconvolute_st_data)
-5.  [05_DGE_clusters_st_data](https://vildeka.github.io/Spatial_DMPA/05_DGE_clusters_st_data)
-6.  [06_DGE_condition_st_data](https://vildeka.github.io/Spatial_DMPA/06_DGE_condition_st_data)
-7.  [07_Gene_set_analysis](https://vildeka.github.io/Spatial_DMPA/07_Gene_set_analysis)
-8.  [08_spatial_distance](https://vildeka.github.io/Spatial_DMPA/08_spatial_distance)
+0.  [00_load_st_data](https://vildeka.github.io/Spatial_Microbiota/00_load_st_data)
+1.  [01_QC_st_data](https://vildeka.github.io/Spatial_Microbiota/01_QC_st_data)
+2.  [02_integrate_st_data](https://vildeka.github.io/Spatial_Microbiota/02_integrate_st_data)
+3.  [03_clustering_st_data](https://vildeka.github.io/Spatial_Microbiota/03_clustering_st_data)
+4.  [04_deconvolute_st_data](https://vildeka.github.io/Spatial_Microbiota/04_deconvolute_st_data)
+5.  [05_DGE_clusters_st_data](https://vildeka.github.io/Spatial_Microbiota/05_DGE_clusters_st_data)
+6.  [06_DGE_condition_st_data](https://vildeka.github.io/Spatial_Microbiota/06_DGE_condition_st_data)
+7.  [07_hdWGCNA_analysis](https://vildeka.github.io/Spatial_Microbiota/07_hdWGCNA_analysis)
+8.  [08_spatial_distance](https://vildeka.github.io/Spatial_Microbiota/08_spatial_distance)
 
 ### Manuscript figures
-1. [Figure_1.Rmd](https://vildeka.github.io/Spatial_DMPA/Figure_1)
-2. [Figure_2.Rmd](https://vildeka.github.io/Spatial_DMPA/Figure_2)
-3. [Figure_3.Rmd](https://vildeka.github.io/Spatial_DMPA/Figure_3)
-4. [Figure_4.Rmd](https://vildeka.github.io/Spatial_DMPA/Figure_4)
-5. [Figure_5.Rmd](https://vildeka.github.io/Spatial_DMPA/Figure_5)
-6. [Figure_6.Rmd](https://vildeka.github.io/Spatial_DMPA/Figure_6)
-7. [Figure_7.Rmd](https://vildeka.github.io/Spatial_DMPA/Figure_7)
+1. [Figure_1.Rmd](https://vildeka.github.io/Spatial_Microbiota/Figure_1)
+2. [Figure_2.Rmd](https://vildeka.github.io/Spatial_Microbiota/Figure_2)
+3. [Figure_3.Rmd](https://vildeka.github.io/Spatial_Microbiota/Figure_3)
+4. [Figure_4.Rmd](https://vildeka.github.io/Spatial_Microbiota/Figure_4)
+5. [Figure_5.Rmd](https://vildeka.github.io/Spatial_Microbiota/Figure_5)
+6. [Figure_6.Rmd](https://vildeka.github.io/Spatial_Microbiota/Figure_6)
 
 ## Dependencies
 
@@ -115,7 +114,7 @@ Conda + renv
 1.  Clone the repo
 2.  If not already installed download mini conda/conda
 3.  In the terminal navigate to the project directory
-4.  create a new enviroment:<br/> `conda env create -n Spatial_DMPA -f environment.yml`
-5.  Activate the enviroment:<br/> `conda activate Spatial_DMPA`
+4.  create a new enviroment:<br/> `conda env create -n Spatial_Microbiota -f environment.yml`
+5.  Activate the enviroment:<br/> `conda activate Spatial_Microbiota`
 6.  Open Rstudio:<br/> `rstudio& Spatial DMPA`
 7.  Install all packages specified by the lockfile:<br/> `renv::restore()`
