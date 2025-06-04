@@ -38,12 +38,11 @@ This project used multiple datasets:
 8.  [08_spatial_distance](https://vildeka.github.io/Spatial_Microbiota/08_spatial_distance)
 
 ### Manuscript figures
-1. [Figure_1.Rmd](https://vildeka.github.io/Spatial_Microbiota/Figure_1)
-2. [Figure_2.Rmd](https://vildeka.github.io/Spatial_Microbiota/Figure_2)
-3. [Figure_3.Rmd](https://vildeka.github.io/Spatial_Microbiota/Figure_3)
-4. [Figure_4.Rmd](https://vildeka.github.io/Spatial_Microbiota/Figure_4)
-5. [Figure_5.Rmd](https://vildeka.github.io/Spatial_Microbiota/Figure_5)
-6. [Figure_6.Rmd](https://vildeka.github.io/Spatial_Microbiota/Figure_6)
+1. [Figure_1.Rmd](https://vildeka.github.io/Spatial_Microbiota/Figure1)
+2. [Figure_2&3.Rmd](https://vildeka.github.io/Spatial_Microbiota/Figure2&3)
+3. [Figure_3.Rmd](https://vildeka.github.io/Spatial_Microbiota/Figure4)
+4. [Figure_4.Rmd](https://vildeka.github.io/Spatial_Microbiota/Figure5)
+5. [Figure_5.Rmd](https://vildeka.github.io/Spatial_Microbiota/Figure6)
 
 ## Dependencies
 
