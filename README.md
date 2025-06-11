@@ -15,13 +15,12 @@ Vilde Kaldhusdal, Mathias Franzen Boger, Adam D. Burgener, Julie Lajoie, Kenneth
 
 ## General info
 
-doi:[10.1038/s41598-024-83775-9](https://doi.org/10.1038/s41598-024-83775-9)
+doi:[...](https://doi.org/)
 
-This repository contains the code related to the article "The cervicovaginal microbiome impacts spatially restricted host transcriptional signatures across the human ectocervical epithelium and submucosa"
+This repository contains the code related to the article "The cervicovaginal microbiome impacts spatially restricted host transcriptional signatures throughout the human ectocervical epithelium and submucosa"
 
-This project used multiple datasets:
--   Spatial transcriptomics data (10x Visium)
--   Transcriptomics data (bulk mRNA-SEQ)
+This project used:
+-   21 samples of Spatial transcriptomics data (10x Visium)
 
 ## Workflow
 
@@ -40,29 +39,32 @@ This project used multiple datasets:
 ### Manuscript figures
 1. [Figure_1.Rmd](https://vildeka.github.io/Spatial_Microbiota/Figure1)
 2. [Figure_2&3.Rmd](https://vildeka.github.io/Spatial_Microbiota/Figure2&3)
-3. [Figure_3.Rmd](https://vildeka.github.io/Spatial_Microbiota/Figure4)
-4. [Figure_4.Rmd](https://vildeka.github.io/Spatial_Microbiota/Figure5)
-5. [Figure_5.Rmd](https://vildeka.github.io/Spatial_Microbiota/Figure6)
+3. [Figure_4.Rmd](https://vildeka.github.io/Spatial_Microbiota/Figure4)
+4. [Figure_5.Rmd](https://vildeka.github.io/Spatial_Microbiota/Figure5)
+5. [Figure_6.Rmd](https://vildeka.github.io/Spatial_Microbiota/Figure6)
 
 ## Dependencies
 
 Project is created with:
 
--   R version: 4.1.2
--   RStudio version: 1.4.1106 (use version seperate from conda env.)
+-   R version: 4.3.3
+-   RStudio version: 2025.05.0 (use version seperate from conda env.)
 -   renv version: 0.15.2
--   Seurat version:
+-   Seurat version: 4.4.0
 
 ## Data Availability Statement
 
 **Spattial transcriptomics count data** files and RDS object can be accessed in the Gene Expression Omnibus public repository, SuperSeries ID GSE217237. The raw transcriptomic sequencing data cannot be held in a public repository due to the sensitive nature of such personal data. Request for data access can be made to the Karolinska Institutet Research Data Office (contact via rdo\@ki.se), and access will be granted if the request meets the requirements of the data policy.
 
-**Bulk transcriptomics count data** files can be accessed in the Gene Expression Omnibus public repository, SuperSeries ID GSE217237. The raw transcriptomic sequencing data cannot be held in a public repository due to the sensitive nature of such personal data. Request for data access can be made to the Karolinska Institutet Research Data Office (contact via rdo\@ki.se), and access will be granted if the request meets the requirements of the data policy.
+The 21 samples have been published in three separate GEO records as follows:
+GSE (12 new sample): P020,P045,P050,P057,P001,P014,P018,P087,P021,P024,P081,P117
+GSE (4 samples): P118, P105, P080, P031
+GSE290350 (5 samples): P004, P008, P026, P044, P067
 
 ## Repo description
 
 -   **src**\
-    contains all the analysis script including all preprocessing steps
+    contains all the analysis scripts
 -   **manuscript**\
     reproducible code for figures included in the manuscript
 -   **md_files**\
