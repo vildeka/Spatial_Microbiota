@@ -1,4 +1,4 @@
-# The cervicovaginal microbiome impacts spatially restricted host transcriptional signatures across the human ectocervical epithelium and submucosa
+# The cervicovaginal microbiome impacts spatially restricted host transcriptional signatures throughout the human ectocervical epithelium and submucosa
 
 Vilde Kaldhusdal, Mathias Franzen Boger, Adam D. Burgener, Julie Lajoie, Kenneth Omollo, Joshua Kimani, Annelie Tjernlund, Keith Fowke, Douglas S. Kwon, Gabriella Edfeldt and Kristina Broliden
 

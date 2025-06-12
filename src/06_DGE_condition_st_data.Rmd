@@ -302,9 +302,9 @@ summary <- DEGs_table %>%
   split(~comb) %>%
   imap(., ~ .x %>%
         filter(., p_val_adj < 0.05) %>%
-        summarise(genes = n(), .by = "Regulation") %>%
-        #add_case(Regulation="Total", genes=sum(.$genes))
-        add_case(Regulation=c("Total", ""), genes=c(sum(.$genes), NA)) %>%
+        summarise(genes = n(), 
+                  uniqe = n_distinct(gene), .by = "Regulation") %>%
+        add_case(Regulation=c("Total", ""), genes=c(sum(.$genes), NA), uniqe=c(sum(.$uniqe), NA)) %>%
         mutate(Combination = c(.y, rep("", 3)), .before="Regulation")
         ) %>% 
   bind_rows() 

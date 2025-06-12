@@ -134,6 +134,16 @@ layers <- c("Superficial","Upper IM","Lower IM","Basal","1","4","0","3","2","9",
 
 ```
 
+```{r}
+dfs <- DEGs_table %>%
+  filter(p_val_adj < 0.05) %>% 
+  split(~layers) %>%
+  map(., ~select(.x, gene))
+
+imap(dfs, ~write.table(.x, file=paste0("../../results/07_GSEA_st_data/Clus_",.y,"_outfile.txt"), sep="\t", col.names = F, row.names = F))
+```
+
+
 ## select DEGs for WGCNA
 ```{r}
 DEG_sig <- DEGs_table %>%
@@ -142,7 +152,7 @@ DEG_sig <- DEGs_table %>%
 
 # the WGCNA was run with 3880 genes (all_Clus_4000DEGs) (it has 51 genes which are not significant and is missing 5 ACK genes)
 # another run only included the WILK genes (3185) 
-# Should run it one more time with All methods (WILK, PAIR and ACK) removing clus 11 and 12 (3771 genes)
+# I have now run it with DEGs from all methods (WILK, PAIR and ACK) removing clus 11 and 12 (3771 genes)
 genes <- unique(DEG_sig$gene)
 
 # alternative with union of pseudobulk and wilcox 
@@ -255,12 +265,12 @@ n_mods <- nrow(mod_color_df) - 1
 new_colors <- paste0(met.brewer("Archambault", n=n_mods)) # "Archambault", "Signac", "Peru1"
 
 # reset the module colors
-DATA <- ResetModuleColors(DATA, c("#88a0dc","#f9d14a","#ed968c","#e78429"))
+DATA <- ResetModuleColors(DATA, c("#ed968c","#f9d14a","#88a0dc","#e78429"))
 # DATA <- ResetModuleColors(DATA, c("#ed968c","#f9d14a","#88a0dc","#e78429"))
 
 # save the dendrogram
 png(paste0("./Figures/hdWGCNA/", "Spatial hdWGCNA dendrogram.png"), width = 10, height = 3, units = "in", res = 300)
-PlotDendrogram(DATA, main='Spatial hdWGCNA dendrogram')
+PlotDendrogram(DATA, main=NA, marAll = c(1, 4, 1, 0)) #bltr
 dev.off()
 ```
 
@@ -273,12 +283,13 @@ DATA <- ModuleConnectivity(DATA)
 DATA <- ResetModuleNames(DATA, new_name = "SM")
 
 # saveRDS(DATA, paste0(result_dir,"hdWGCNA_3771DEGs_Seurat.RDS")) 
-# DATA <- readRDS(paste0("../../results/09_hdWGCNA/all_Clus_4000DEGs/","hdWGCNA_Seurat.RDS"))
+# DATA <- readRDS(paste0("../results/09_hdWGCNA/","hdWGCNA_3771DEGs_Seurat.RDS"))
+# DATA <- readRDS(paste0("../results/09_hdWGCNA/all_Clus_4000DEGs/","hdWGCNA_Seurat.RDS"))
 
 #write_csv(DATA@misc[["vis"]][["wgcna_modules"]], paste0(result_dir, "wgcna_all_Clus_modules.csv"))
 write_csv(DATA@misc[["vis"]][["wgcna_modules"]], paste0(result_dir, "wgcna_3771DEGs_modules.csv"))
-# modules <- read_csv(paste0("../../results/09_hdWGCNA/all_Clus_4000DEGs/", "wgcna_all_Clus_modules.csv"))
-# modules <- read_csv(paste0("../../results/09_hdWGCNA/", "wgcna_3771DEGs_modules.csv"))
+# modules <- read_csv(paste0("../results/09_hdWGCNA/all_Clus_4000DEGs/", "wgcna_all_Clus_modules.csv"))
+# modules <- read_csv(paste0("../results/09_hdWGCNA/", "wgcna_3771DEGs_modules.csv"))
 ```
 
 ```{r add-modules-to-seurat}
@@ -294,8 +305,10 @@ DATA@meta.data <- cbind(DATA@meta.data, MEs)
 DATA <- DATA %>% left_join(., select(meta, ID, Nugent="Nugent_Score_v3"), by=c( "orig.ident"="ID"))
 
 mod_nest <- modules %>%
-  nest(data = module)
+  nest(data = -module)
 mod_nest
+
+# saveRDS(DATA, paste0(result_dir,"all_Clus_4000DEGs/","hdWGCNA_Seurat.RDS"))
 ```
 
 ## Data visualization
@@ -373,14 +386,19 @@ p <- map(p,~.x +
   scale_color_gradientn(colours = c('blue','grey95', 'red'), name = "Avg. Expression",
                        limits = c(-1.5, 2.5), oob = scales::squish,
                        values = scales::rescale(c(-1.5, 0, 2.5))) + 
-    theme(legend.direction = "vertical", legend.box = "horizontal",
+    theme(legend.direction = "vertical", legend.box = "horizontal", legend.margin=margin(1,-1,1,6),
+          legend.text = element_text(size = 9), legend.title =element_text(size = 10),
           plot.margin = unit(c(.1, -0, -1, -0), "lines")) + # t,r,b,l
-    xlab('') + ylab('') + guides(col = guide_colourbar(barwidth = .5, barheight = 7 )) 
+    xlab('') + ylab('') + guides(col = guide_colourbar(barwidth = .3, barheight = 5 )) 
 )
+p
 
 # combine plots
-# dev.new(width=7, height=6, noRStudioGD = TRUE)
-plot_grid(p[[1]], p[[2]]+theme(legend.position = "none"), p[[2]]+theme(legend.position = "none"), ncol = 1)
+# dev.new(width=6, height=6, noRStudioGD = TRUE)
+leg <- get_legend(p[[1]])
+p1 <- plot_grid(p[[1]]+theme(legend.position = "none"),leg, rel_widths = c(1, 1.3))
+plot_grid(p1, p[[2]]+theme(legend.position = "none"), p[[2]]+theme(legend.position = "none"), 
+          rel_heights = c(.75,1,1), ncol = 1)
 
 # save plots
 #ggsave(filename=paste0("./Figures/hdWGCNA/", "dotplot_layers.png"),p[[2]],  width = 7, height = 2.5, bg = "white")
@@ -578,9 +596,9 @@ enrich_df %>%
   map(., ~split(.x, ~module)) %>%
   imap(., ~write.xlsx(.x, paste0(result_dir,"New_3771DEGs/", "Enrichment_",.y,".xlsx")) )
 
-# saveRDS(enrich_df, paste0("../../results/09_hdWGCNA/all_Clus_4000DEGs/", "Enrichment.RDS"))
-# enrich_df <- readRDS(paste0("../../results/09_hdWGCNA/all_Clus_4000DEGs/", "Enrichment.RDS"))
-# enrich_df <- read.xlsx(paste0("../../results/09_hdWGCNA/all_Clus_4000DEGs/", "Enrichment_all_Clus.xlsx"))
+saveRDS(enrich_df, paste0("../results/09_hdWGCNA/New_3771DEGs/", "Enrichment.RDS"))
+# saveRDS(enrich_df, paste0("../results/09_hdWGCNA/all_Clus_4000DEGs/", "Enrichment.RDS"))
+# enrich_df <- readRDS(paste0("../results/09_hdWGCNA/New_3771DEGs/", "Enrichment.RDS"))
 
 # make GO term plots:
 EnrichrBarPlot(
