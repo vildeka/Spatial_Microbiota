@@ -1,6 +1,6 @@
 ---
 title: "Figure 2 & 3"
-date: "`r format(Sys.time(), '%d %B, %Y')`"
+date: "`r format(Sys.time(), '%d-%m-%Y')`"
 format:
   html:
     embed-resources: true
@@ -42,10 +42,10 @@ source("../../bin/render_with_jobs.R")
 render_git_with_job(fig_path = "./Figures/02&03/")
 system2(command = "sed", stdout = TRUE,
         args = c("-i", "''","-e", 's/src=\\"\\./src=\\"\\.\\./g',
-                 paste0("./md_files/", basename("./07_figures.md"))))
+                 paste0("./md_files/", basename("./02&03_figures.md"))))
 
 # kniter
-knit_html_with_job(out_dir = "../lab_book/figure_07", fig_path = "./Figures/07/")
+knit_html_with_job(out_dir = "../../lab_book/figure_02&03", fig_path = "./Figures/02&03/")
 ```
 
 ### Load data and libraries
@@ -86,19 +86,19 @@ sample_id <- c("P020", "P045", "P050", "P057",
 DATA <- readRDS(paste0("../../results/03_clustering_st_data/","seuratObj_clustered.RDS"))
 DEGs_table <- read_csv(paste0(input_dir,"DGEs_condition_wilcox.0.7.csv"))
 pseudo_DEGs <- readRDS(paste0(input_dir,"Pseudobulk_across_DEGs.RDS"))
-#DATA <- readRDS(paste0(input_dir,"seuratObj_spatial_dist_SM.RDS"))
 
 ```
 
 ```{r}
 D <- DEGs_table %>%
   filter(., p_val_adj < 0.05) %>%
-  filter(., !(grepl("0|^3|9|10|11|12", .$subgroup))) %>%
+  #filter(., !(grepl("0|^3|9|10|11|12", .$subgroup))) %>%
   filter(., cluster == "L4") %>%
   mutate(sp_annot = ifelse(grepl("\\d", .$layers), "SubMuc", "epi")) %>%
   split(~sp_annot) 
 ```
 
+### venn-diagram of DEGs between DEA methods
 ```{r Venn-diagram-DEGs}
 ##########################
 # COMPUTE STATS FOR DEGs #
@@ -145,17 +145,17 @@ DEGs_nest
 
 # Number of DEGs
 WILK <- DEGs_table %>%
-  filter(!(grepl("11|$^12$|^9", .$layers))) %>%
+  filter(!(grepl("^11$|$^12$", .$layers))) %>%
   filter(p_val_adj < 0.05) %>% .$gene %>% unique()
 
 PAIR <- pseudo_DEGs %>%
-  select(pairwise) %>% unnest(cols = c(pairwise)) %>% filter(FDR < 0.05) %>% .$Genes %>% unique()
+  select(layers, pairwise) %>% unnest(cols = c(pairwise)) %>% filter(FDR < 0.05) %>% .$Genes %>% unique()
 
 ACK <- pseudo_DEGs %>%
-  select(across) %>% unnest(cols = c(across)) %>% filter(FDR < 0.05) %>% .$symbol %>% unique()
+  select(layers, across) %>% unnest(cols = c(across)) %>% filter(FDR < 0.05) %>% .$symbol %>% unique()
 
-setdiff(PAIR, WILK)
-intersect(intersect(PAIR, WILK), ACK)
+# setdiff(PAIR, WILK)
+# intersect(intersect(PAIR, WILK), ACK)
 
 all_DEGs <- c(PAIR, WILK, ACK) %>% unique()
 
@@ -171,7 +171,7 @@ library(VennDiagram)
 venn <- venn.diagram(
         x = list(WILK, PAIR, ACK),
         category.names = c("Wilcox" , "Pairwise" , "Across"),
-        filename = 'venn_diagramm.png',
+        filename = './Figures/02&03/venn_diagramm.png',
         output=FALSE,
         
         # Output features
@@ -318,7 +318,6 @@ grid::grid.draw(A$epi)
 
 # ggsave("/DEGs.pdf", width = 5, height = 4)
 ```
-
 
 ```{r top-DEGs-expression-by-morf}
 #############
@@ -521,26 +520,31 @@ morf_DEGs_plot <- function(genes = genes_epi, clus="^5$|^6$|^7|^8"){
 (B_epi <- morf_DEGs_plot(genes = genes_epi))
 (B_SubMuc <- morf_DEGs_plot(genes = genes_SubMuc, clus="^1$|^4$|^0|^3"))
 
-geneid <- DEGs_table %>% filter(gene %in% geneid) %>% filter(grepl("^1$|Basal", .$layers)) %>% distinct(gene, layers) %>% deframe()
-(Immuno <- morf_DEGs_plot(genes = geneid, clus="^1$|8"))
 ```
 
-```{r combine-plots}
+```{r FIGURE2, fig.width=6.7,fig.height=6.7}
 #########################
 # COMBINE PANEL A AND B #
 #########################
 # patchwork does not respect margins when nesting plots, use cowplot instead!
 # dev.new(width=6.7, height=6.7, noRStudioGD = TRUE) 
 (FIG2 <- plot_grid(A$epi, B_epi, ncol = 1, rel_heights = c(1), rel_widths = c(1), labels = c("A", "C")) )
+
+# ggsave(paste0(result_dir, "FIG2.png"), FIG2,  width = 6.7, height = 6.7, bg = "white", dpi = 300)
+```
+
+```{r FIGURE3, fig.width=6.7,fig.height=7.5}
+#########################
+# COMBINE PANEL A AND B #
+#########################
+# patchwork does not respect margins when nesting plots, use cowplot instead!
 # dev.new(width=6.7, height=7.5, noRStudioGD = TRUE) 
 (FIG3 <- plot_grid(A$SubMuc, B_SubMuc, ncol = 1, rel_heights = c(1, .7), rel_widths = c(1), labels = c("A", "B")) )
 
- ggsave(paste0(result_dir, "FIG2.png"), FIG2,  width = 6.7, height = 6.7, bg = "white", dpi = 300)
- ggsave(paste0(result_dir, "FIG3.png"), FIG3, width = 6.7, height = 7.5, bg = "white", dpi = 300)
+# ggsave(paste0(result_dir, "FIG3.png"), FIG3, width = 6.7, height = 7.5, bg = "white", dpi = 300)
 ```
 
-# DOT plots (not used)
-```{r}
+```{r dot-plos, eval=FALSE}
 ord <- c("Superficial", "Upper IM", "Lower IM", "Basal","1","4","0","3","2","9","10","11","12")
 col <- set_names(c("#E41A1C","#FF7F00","#C77CFF","#984EA3","#00A9FF","#377EB8",
               "#CD9600","#7CAE00","#e0e067","#FF61CC","#FF9DA7","#999999","#A65628"), ord)
@@ -667,14 +671,3 @@ C_1 <- wrap_plots(dot_fig, ncol = 4, guides = "collect"  ) +
 ggsave("./Figures/03/Fig_03C1.png", C_1, width = 6.7, height = 2.4) #, dpi = 300
 ```
 
-```{r}
-######################
-# COMBINE ALL PANELS #
-######################
-# patchwork does not respect margins when nesting plots, use cowplot instead!
-# dev.new(width=3.54, height=3.2, noRStudioGD = TRUE) 
-
-(plot <- plot_grid( FIG2, C,  ncol = 2, rel_heights = c(1), rel_widths = c(1, .5)) )
-
-# ggsave("./Figures/03/dot_and_tissue.png", C, width = 3.4, height = 3.2, bg = "white", dpi = 300)
-```

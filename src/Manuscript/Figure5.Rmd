@@ -1,6 +1,6 @@
 ---
-title: "Figure 5 hdWGCNA"
-date: "`r format(Sys.time(), '%d %B, %Y')`"
+title: "Figure 5"
+date: "`r format(Sys.time(), '%d-%m-%Y')`"
 format:
   html:
     embed-resources: true
@@ -31,6 +31,7 @@ knitr::opts_chunk$set(
 #  setwd("~/work/Brolidens_work/Projects/Spatial_Microbiota/src/Manuscript")
 ```
 
+## hdWGCNA analysis
 ```{r background_job, eval=FALSE, include=FALSE}
 source("../../bin/render_with_jobs.R")
 
@@ -42,10 +43,10 @@ source("../../bin/render_with_jobs.R")
 render_git_with_job(fig_path = "./Figures/02&03/")
 system2(command = "sed", stdout = TRUE,
         args = c("-i", "''","-e", 's/src=\\"\\./src=\\"\\.\\./g',
-                 paste0("./md_files/", basename("./07_figures.md"))))
+                 paste0("./md_files/", basename("./05_figures.md"))))
 
 # kniter
-knit_html_with_job(out_dir = "../lab_book/figure_07", fig_path = "./Figures/07/")
+knit_html_with_job(out_dir = "../../lab_book/figure_05", fig_path = "./Figures/05/")
 ```
 
 ### Load data and libraries
@@ -58,6 +59,8 @@ library(Seurat)
 library(SeuratObject)
 library(tidyseurat)
 library(hdWGCNA)
+library(enrichR)
+library(png)
 library(cowplot)
 library(patchwork)
 library(openxlsx)
@@ -69,10 +72,9 @@ source("../../bin/plotting_functions.R")
 # PATHS #
 #########
 input_dir <- "../../results/06_DGE_condition_st_data/"
-result_dir <- "./Figures/02&03/"
+result_dir <- "./Figures/05/"
 if( isFALSE(dir.exists(result_dir)) ) { dir.create(result_dir,recursive = TRUE) }
-epi_clus <- "^5$|^6$|^7|^8" # res 0.75
-# epi_clus <- "^11$|^6$|^7|^9" # res 1.0
+epi_clus <- "^5$|^6$|^7|^8" # res 0.7
 
 ord <- c("Superficial", "Upper IM", "Lower IM", "Basal","1","4","0","3","2","9","10","11","12")
 ord1 <- c("5", "6", "7", "8","1","4","0","3","2","9","10","11","12")
@@ -84,28 +86,41 @@ sample_id <- c("P020", "P045", "P050", "P057",
 #############
 # LOAD DATA #
 #############
-DATA <- readRDS(paste0("../../results/03_clustering_st_data/","seuratObj_clustered.RDS"))
-DEGs_table <- read_csv(paste0(input_dir,"DGEs_condition_wilcox.0.7.csv"))
-pseudo_DEGs <- readRDS(paste0(input_dir,"Pseudobulk_across_DEGs.RDS"))
-
 # hdWGCNA
-DATA <- readRDS(paste0("../../results/09_hdWGCNA/","hdWGCNA_Seurat.RDS"))
-DATA <- readRDS(paste0("../../results/09_hdWGCNA/","all_Clus_4000DEGs/","hdWGCNA_Seurat.RDS"))
+DATA <- readRDS(paste0("../../results/09_hdWGCNA/","hdWGCNA_3771DEGs_Seurat.RDS"))
+modules <- read_csv(paste0("../../results/09_hdWGCNA/", "wgcna_3771DEGs_modules.csv"))
 
-modules <- read_csv(paste0("../../results/09_hdWGCNA/all_Clus_4000DEGs/", "wgcna_all_Clus_modules.csv"))
+# DATA <- readRDS(paste0("../../results/09_hdWGCNA/",,"all_Clus_4000DEGs/","hdWGCNA_Seurat.RDS"))
+# modules <- read_csv(paste0("../../results/09_hdWGCNA/all_Clus_4000DEGs/", "wgcna_all_Clus_modules.csv"))
+
 ```
 
-```{r dendogram, fig.width=10, fig.height=3}
-# save the dendrogram
-png(paste0("./Figures/03/", "Dendo_all_layers.png"), width = 10, height = 3, units = "in", res = 300)
-PlotDendrogram(DATA, main='Spatial hdWGCNA dendrogram')
-A <- recordPlot()          
+```{r Spatial_hdWGCNA_dendrogram, fig.width=10, fig.height=3}
+# plot the dendrogram
+png(paste0("./Figures/05/", "Spatial_hdWGCNA_dendrogram.png"), 
+    width = 10, height = 3, units = "in", res = 300)
+PlotDendrogram(DATA, main=NA, marAll = c(1, 4, 1, 0))
+dev.off()
 
-# dev.new(width=4, height=3, noRStudioGD = TRUE)
+dend <- readPNG("./Figures/05/Spatial_hdWGCNA_dendrogram.png")
+g <- grid::rasterGrob(dend, interpolate=TRUE) 
+
+A <- ggplot() +
+  annotation_custom(g, xmin=-Inf, xmax=Inf, ymin=-Inf, ymax=Inf) +
+  theme_nothing() +
+  theme(rect = element_blank(), # removes the box around the plot)
+        plot.margin = unit(c(-0,0,0,0), "lines")) #t,r,b,l  
+
+# dev.new(width=3.5, height=3, noRStudioGD = TRUE)
 A
 ```
 
 ```{r dot-plots}
+# get module eigengenes and gene-module assignment tables
+MEs <-  DATA@misc[["vis"]][["MEs"]]
+# add the MEs to the seurat metadata so we can plot it with Seurat functions
+DATA@meta.data <- cbind(DATA@meta.data, MEs)
+
 # plot with Seurat's DotPlot function
 mods <- unique(modules$module)[unique(modules$module) != 'grey']
 p <- c('groups', 'layers') %>%
@@ -118,33 +133,38 @@ p <- map(p,~.x +
   scale_color_gradientn(colours = c('blue','grey95', 'red'), name = "Avg. Expression",
                        limits = c(-1.5, 2.5), oob = scales::squish,
                        values = scales::rescale(c(-1.5, 0, 2.5))) + 
-    theme(legend.direction = "vertical", legend.box = "horizontal",
-          plot.margin = unit(c(.1, -0, -1, -0), "lines")) + # t,r,b,l
-    xlab('') + ylab('') + guides(col = guide_colourbar(barwidth = .5, barheight = 7 )) 
+    theme(axis.text = element_text(size = 10),
+          legend.text = element_text(size = 9), legend.title =element_text(size = 10),
+          axis.line = element_line(size = .4), # , colour = "#bebebe"
+          axis.ticks = element_line(size = .4), # , colour = "#bebebe"
+          legend.direction = "vertical", legend.box = "horizontal",
+          legend.margin=margin(1,-1,1,6),
+          plot.margin = unit(c(.7, -0, -1.2, -1), "lines")) + # t,r,b,l
+    xlab('') + ylab('') + guides(col = guide_colourbar(barwidth = .3, barheight = 4 )) 
 )
-p
 
-# combine plots and legend
-legend <- get_legend(p[[1]])
-B <- plot_grid(p[[1]]+theme(legend.position = "none"), legend)
+# combine plots
+# dev.new(width=3.9, height=3.3, noRStudioGD = TRUE)
+leg <- get_legend(p[[1]])
+p1 <- plot_grid(p[[1]]+theme(legend.position = "none"),NULL, rel_widths = c(1, 1.3))
+(B <- plot_grid(p1, p[[2]]+theme(legend.position = "none"),rel_heights = c(.75,1,1), ncol = 1) )
 
-# dev.new(width=7, height=3, noRStudioGD = TRUE)
-B <- plot_grid(B, p[[2]]+theme(legend.position = "none"), ncol=1, rel_heights = c(1,1.4))
+ggsave(filename=paste0("./Figures/05/", "dot-plot.png"),B,  width = 3.9, height = 3.3, bg = "white")
 ```
 
-```{r}
+```{r radar_plot}
 # relative expression level of each module
 plot_list <- ModuleRadarPlot(
   arrange(DATA, layers),
   group.by = 'groups', combine = F, # ncol = 4, 
   #barcodes = seurat_obj@meta.data %>% subset(cell_type == 'INH') %>% rownames(),
-  axis.label.size=4, group.line.width =  0.5,
-  grid.label.size=4
+  axis.label.size=3, group.line.width =  0.3, grid.line.width = 0.3, gridline.max.linetype = "dashed",
+  grid.label.size=3
 ) 
 
-# dev.new(width=7, height=3, noRStudioGD = TRUE)
+# dev.new(width=5.5, height=2, noRStudioGD = TRUE)
 (C <- wrap_plots(plot_list, ncol=4) & theme(title = element_text(size=8), plot.margin = unit(c(.1, -0, -1, -0), "lines")) )
-ggsave(filename=paste0("./Figures/03/", "Group_contribution.png"),p,  width = 10, height = 3, bg = "white")
+# ggsave(filename=paste0("./Figures/05/", "Group_contribution.png"),C,  width = 10, height = 3, bg = "white")
 ```
 
 
@@ -162,13 +182,14 @@ mod <- map(mod, ~plot_genes.fun(DATA,
                scale = F,
                mins = -20, maxs = 20,
                diverging = T,
-               col = rev(c("#B2182B","#D6604D","#F4A582","#FDDBC7","#F7F7F7","#D1E5F0","#92C5DE","#4393C3","#2166AC")),
+               col = rev(c("#c41625","#dc4e43","#fa9975","#FDDBC7","#F7F7F7","#D1E5F0","#92C5DE","#4393C3","#2166AC")),
                point_size = .5,
                red="umapharmony", 
-               lable = TRUE) + theme(plot.title = element_text(hjust = 0)))
+               lable = TRUE) + ggtitle(" ") + theme(plot.title = element_text(hjust = 0))) # size = 3
 
-D <- map(seq_along(mod), ~mod[[.x]] + facet_wrap(~groups, ncol = 4)) %>% wrap_plots(., ncol=1)
-ggsave(filename=paste0("./Figures/03/", "Modules_across_groups_ALL_clus.png"),g,  width = 10, height = 10, bg = "white")
+# dev.new(width=4, height=4, noRStudioGD = TRUE)
+(D_1 <- map(seq_along(mod), ~mod[[.x]] + facet_wrap(~groups, ncol = 4)) %>% wrap_plots(., ncol=1) )
+# ggsave(filename=paste0("./Figures/05/", "Modules_across_groups_UMAP.png"),D_1,  width = 10, height = 10, bg = "white")
 ```
 
 ```{r enrichR}
@@ -189,11 +210,10 @@ enrich_df <- GetEnrichrTable(DATA) %>%
 
 enrich_df %>%
   map(., ~split(.x, ~module)) %>%
-  imap(., ~write.xlsx(.x, paste0(result_dir,"all_Clus_4000DEGs/", "Enrichment_",.y,".xlsx")) )
+  imap(., ~write.xlsx(.x, paste0(result_dir,"New_3771DEGs/", "Enrichment_",.y,".xlsx")) )
 
-# saveRDS(enrich_df, paste0("../../results/09_hdWGCNA/all_Clus_4000DEGs/", "Enrichment.RDS"))
-enrich_df <- readRDS(paste0("../../results/09_hdWGCNA/all_Clus_4000DEGs/", "Enrichment.RDS"))
-# enrich_df <- read.xlsx(paste0("../../results/09_hdWGCNA/all_Clus_4000DEGs/", "Enrichment_all_Clus.xlsx"))
+# saveRDS(enrich_df, paste0("../../results/09_hdWGCNA/New_3771DEGs/", "Enrichment.RDS"))
+# enrich_df <- readRDS(paste0("../../results/09_hdWGCNA/New_3771DEGs/", "Enrichment.RDS"))
 
 ```
 
@@ -233,18 +253,19 @@ GeneRatio_plot.fun <- function(enrich_df, txt_size = 15, nr_path=3,
     theme(axis.title.y = element_blank(),
           strip.text.x = element_text(hjust = 0.1, margin=margin(l=0)),
           strip.background = element_blank(),
-          panel.spacing = unit(0, "cm"),
+          panel.spacing = unit(1, "lines"),
+          axis.text.y = element_text(size = 10),
           panel.border = element_blank())
   return(p)
 }
 
+df <- bind_rows(enrich_df[[2]], enrich_df[[3]]) %>%
+  filter(db == "Transcription_Factor_PPIs" & module == "SM4" | db == "KEGG_2021_Human")
 
-p1 <- GeneRatio_plot.fun(enrich_df$Transcription_Factor_PPIs)
-p2 <- GeneRatio_plot.fun(enrich_df$GO_Biological_Process_2021)
-p3 <- GeneRatio_plot.fun(enrich_df$KEGG_2021_Human)
-D_2 <- wrap_plots(p1, p2, p3, ncol = 3, guides = "collect") 
+# dev.new(width=3.5, height=5, noRStudioGD = TRUE)
+(D_2 <- GeneRatio_plot.fun(df) + theme(legend.position = "none") )
 
-ggsave(paste0("./Manuscript/Figures/03/", "Enrichment.png"),p,  width = 11, height = 3, bg = "white")
+# ggsave(paste0("./Figures/05/", "Enrichment.png"),D_2,  width = 3.8, height = 5, bg = "white")
 ```
 
 ```{r combine-panels}
@@ -252,8 +273,9 @@ ggsave(paste0("./Manuscript/Figures/03/", "Enrichment.png"),p,  width = 11, heig
 # COMBINE ALL PANELS #
 ######################
 # dev.new(width=7, height=8, noRStudioGD = TRUE) 
-A_C <- plot_grid(NULL, C, ncol = 1)
+A_C <- plot_grid(A, C, ncol = 1, rel_widths = c(1, .4))
 A_B_C <- plot_grid(A_C, B, ncol = 2)
+D <- plot_grid(D_1, D_2)
 (Figure5 <- plot_grid(A_B_C, D, ncol = 1, rel_heights = c(0.33, .66)) )
 ```
 
