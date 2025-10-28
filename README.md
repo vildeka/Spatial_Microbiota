@@ -30,11 +30,9 @@ This project used:
 1.  [01_QC_st_data](https://vildeka.github.io/Spatial_Microbiota/01_QC_st_data)
 2.  [02_integrate_st_data](https://vildeka.github.io/Spatial_Microbiota/02_integrate_st_data)
 3.  [03_clustering_st_data](https://vildeka.github.io/Spatial_Microbiota/03_clustering_st_data)
-4.  [04_deconvolute_st_data](https://vildeka.github.io/Spatial_Microbiota/04_deconvolute_st_data)
-5.  [05_DGE_clusters_st_data](https://vildeka.github.io/Spatial_Microbiota/05_DGE_clusters_st_data)
-6.  [06_DGE_condition_st_data](https://vildeka.github.io/Spatial_Microbiota/06_DGE_condition_st_data)
-7.  [07_hdWGCNA_analysis](https://vildeka.github.io/Spatial_Microbiota/07_hdWGCNA_analysis)
-8.  [08_spatial_distance](https://vildeka.github.io/Spatial_Microbiota/08_spatial_distance)
+4.  [05_DGE_clusters_st_data](https://vildeka.github.io/Spatial_Microbiota/05_DGE_clusters_st_data)
+5.  [06_DGE_condition_st_data](https://vildeka.github.io/Spatial_Microbiota/06_DGE_condition_st_data)
+6.  [07_hdWGCNA_analysis](https://vildeka.github.io/Spatial_Microbiota/07_hdWGCNA_analysis)
 
 ### Manuscript figures
 1. [Figure_1.Rmd](https://vildeka.github.io/Spatial_Microbiota/Figure1)
