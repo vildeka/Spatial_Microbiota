@@ -1,0 +1,1033 @@
+---
+title: "Figure 6"
+date: "`r format(Sys.time(), '%d-%m-%Y')`"
+format:
+  html:
+    embed-resources: true
+    code-fold: show
+params:
+  fig.path: "`r paste0(params$fig.path)`" #./Figures/
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  fig.width     = 6.6929133858,
+  fig.path      = params$fig.path,#"../Figures/",
+  fig.align     = "center",
+  message       = FALSE,
+  warning       = FALSE,
+  dev           = c("png"),
+  dpi           = 300,
+  fig.process = function(filename){
+    new_filename <- stringr::str_remove(string = filename,
+                                        pattern = "-1")
+    fs::file_move(path = filename, new_path = new_filename)
+    ifelse(fs::file_exists(new_filename), new_filename, filename)
+  }
+  )
+
+# setwd("~/work/Brolidens_work/Projects/Spatial_Microbiota/src/Manuscript/")
+```
+
+```{r background_job, eval=FALSE, include=FALSE}
+source("../../bin/render_with_jobs.R")
+
+# quarto
+# render_html_with_job(out_dir = lab_dir)
+# fs::file_move(path = file, new_path = paste0(lab_dir, file))
+
+# currently using quarto for github and kniter for html due to source code option 
+render_git_with_job(fig_path = "./Figures/06/")
+system2(command = "sed", stdout = TRUE,
+        args = c("-i", "''","-e", 's/src=\\"\\./src=\\"\\.\\./g',
+                 paste0("./md_files/", basename("./08_spatial_distance.md"))))
+
+# kniter
+knit_html_with_job(out_dir = "../../lab_book/figure_06", fig_path = "./Figures/06/")
+```
+
+### Load data and libraries
+```{r Load_data}
+##################
+# LOAD LIBRARIES #
+##################
+library(tidyverse)
+library(Seurat)
+library(SeuratObject)
+library(tidyseurat)
+library(hdWGCNA)
+library(ggpubr)
+library(cowplot)
+library(patchwork)
+library(openxlsx)
+library(readxl)
+
+source("../../bin/spatial_visualization.R")
+source("../../bin/plotting_functions.R")
+
+#########
+# PATHS #
+#########
+input_dir <- "../results/03_clustering_st_data/"
+result_dir <- "./Figures/06/"
+if( isFALSE(dir.exists(result_dir)) ) { dir.create(result_dir,recursive = TRUE) }
+
+
+ord <-  c("Superficial","Upper IM","Lower IM","Basal","1","4","0","3","2","9","10","11","12")
+sample_id <- c("P020", "P045", "P050", "P057",
+        "P008", "P031", "P080", "P044", "P026", "P105", 
+        "P001", "P004", "P014", "P018", "P087", "P118",
+        "P021", "P024", "P067", "P081", "P117" ) %>% set_names()
+
+#############
+# LOAD DATA #
+#############
+meta <- read_csv("../../data/ST-samples_metadata.csv")
+DATA <- readRDS(paste0("../../results/09_hdWGCNA/","hdWGCNA_3771DEGs_Seurat.RDS"))
+enrich_df <- readRDS(paste0("../../results/09_hdWGCNA/New_3771DEGs/", "Enrichment.RDS"))
+
+dataset_names <- c("ASV_Luminal_raw_counts", # Tissue, Boston run 1 (108 samples)
+                   "ASV_Tissue_raw_counts")  # Tissue, Boston run 2+1 (93 sample)
+datasets <- map(dataset_names, 
+  ~read_excel(paste0("../../data/", "Suppl.Tbl.01 Abundance, diversity, BCs and ASV counts.xlsx"), sheet = .x)) %>% 
+  set_names(., dataset_names)
+
+#################
+# COLOUR PALLET #
+#################
+col_epi <- c("#E41A1C","#FF7F00","#C77CFF","#984EA3")
+col_submuc <- c("#CD9600","#00A9FF","#e0e067","#7CAE00","#377EB8","#00BFC4",NA, NA,"#984EA3", "#FF61CC","#FF9DA7")
+col_trajectory <- c("grey70", "orange3", "firebrick", "purple4")
+
+col_feat <- c("#EFEDF5", "#DADAEB", "#BCBDDC", "#9E9AC8", "#807DBA", "#6A51A3", "#54278F", "#3F007D") # Purples
+```
+
+
+```{r enrichment-figure, eval=FALSE}
+# this code is an attempt at extracting the hirarchical relationship between GO terms
+# in order to compress the GO results into more higer level functions which would be more 
+# easily visualized. 
+# Its not super refined in its current state
+######################
+# ENRICHMENT RESULTS #
+######################
+path <- "/Users/vilkal/work/Brolidens_work/Projects/Spatial_Microbiota/results/07_GSEA_st_data/Clus_4_GO_BP_goa_human_functional_classification.tsv"
+df <- read.delim(path, header=TRUE)
+df <- read_tsv(path) %>%
+  separate(col = `Process~name`, into = c("goID", "Term"), sep = "~") %>%
+  arrange(`Benjamini and Hochberg (FDR)`) %>%
+  filter(num_of_Genes >= 5)
+
+go_list <- as.list(GOBPPARENTS[df$goID])
+# Convert to tibble
+go_tibble <- imap_dfr(go_list, ~{
+  tibble(
+    GO_term = .y,
+    relation = names(.x),
+    target = unname(.x)
+  )
+})
+length(df$goID)
+length(intersect(df$goID, go_tibble$GO_term))
+
+###################
+# GO SLIM SUMMARY #
+###################
+# GO slim is a simplified version of the full Gene Ontology.
+# It contains high-level terms to give a broad overview without detailed specificity.
+# every GO term should belong to one or more GO slim top level categories
+library(GO.db)
+library(GSEABase)
+path_slim <- "/Users/vilkal/work/Brolidens_work/Projects/Spatial_DMPA/resources/goslim_agr.obo"
+slim <- getOBOCollection(path_slim)
+
+goterms <- tibble("Term"=Term(GOTERM), "id"=names(Term(GOTERM))) %>%
+  mutate(t = paste0("GOBP_", toupper(.$Term)) ) %>%
+  mutate(t = gsub(x = .$t, " |-|, |/","_" ))
+go <- set_names(goterms$Term, goterms$id)
+
+# collection of significant genes:
+collection <- GOCollection(na.omit(df$goID), ontology="BP")
+
+slim_df <- goSlim(collection, slim, "BP")
+
+mappedIds <- function(goID, collection){
+  # this function identifies all children for a set of supplied goIDs
+  # goID should be a set of higher level terms you want to use to describe your lower levels terms
+  # collection is all your goIDs that you found significant
+    map <- as.list(GO.db::GOBPOFFSPRING[goID]) # gets offspring of goIDs
+    mapped <- lapply(map, intersect, ids(collection)) # removes terms that was not sig.from among the children  
+    
+    df <- tibble("go_ids"=  mapped,
+           "go_terms" = map(mapped, ~paste(go[.x]), collapse = ";") ) # paste(go[unlist(mapped)], collapse = ";")
+    df
+}
+
+# the 21 top level categories in GOslim:
+slim_goIDs <- c("GO:0000003", "GO:0002376", "GO:0005975", "GO:0006259", "GO:0006629",
+                "GO:0007049", "GO:0007610", "GO:0008283", "GO:0009056", "GO:0012501",
+                "GO:0016043", "GO:0016070", "GO:0019538", "GO:0023052", "GO:0030154",
+                "GO:0032502", "GO:0042592", "GO:0050877", "GO:0050896", "GO:0051234",
+                "GO:1901135")
+df_slim <- mappedIds(slim_goIDs, collection) %>%
+  mutate(slim_id = names(go_ids),
+         slim_term = go[names(go_ids)],
+         count = map_int(.$go_ids, ~length(.x)))
+
+df_slim_long <- df_slim %>% 
+  unnest(c(go_ids, go_terms)) %>%
+  dplyr::select(slim_id, slim_term, go_ids, go_terms)
+
+#######################################
+# IDENTIFY MULTIPLE LEVELS OF GO TERMS #
+########################################
+# The GO hierarchy is a graph structure with branches that represent relationships between biological terms
+# "is_a" denotes a subtype relationship (e.g., lysosomal membrane is a membrane).
+# "part_of" indicates component membership (e.g., nucleus is part of a cell).
+# this code tries to capture this information in a table format
+d <- go_tibble %>%
+  #filter(relation == "part of") %>%
+  filter(GO_term %in% df$goID ) %>%
+  left_join(dplyr::select(goterms,Term1="Term", id), by = c("target"="id")) %>%
+  rowwise() %>%
+  mutate(next_lvl = if (target %in% names(go_list) && "part of" %in% names(go_list[[target]]))
+    go_list[[target]][["part of"]] else NA) %>%
+  # Second: Fill in 'isa' if 'next_lvl' is still NA and 'isa' is available
+  mutate(next_lvl = if (is.na(next_lvl) && target %in% names(go_list) && "isa" %in% names(go_list[[target]])) {
+    go_list[[target]][["isa"]] } else { next_lvl }) %>%
+  #mutate(next2_lvl = if (is.na(next_lvl) && next_lvl %in% names(go_list) && "part of" %in% names(go_list[[next_lvl]]))
+    #go_list[[next_lvl]][["part of"]] else NA) %>%
+  ungroup() %>%
+  left_join(dplyr::select(goterms, Term2="Term", id), by = c("next_lvl"="id")) %>%
+  left_join(dplyr::select(df_slim_long, slim_id, slim_term, go_ids), by = c("GO_term"="go_ids")) %>%
+  mutate(comb = ifelse(is.na(slim_term), .$Term2, .$slim_term)) %>%
+  # remove duplicate higher level terms by simply selecting the first:
+  slice_head(n = 1, by = GO_term) %>%
+  arrange(comb) 
+
+length(unique(d$comb))
+d %>% 
+  nest(-comb)
+
+df_ <- df %>%
+  dplyr::select(1:8) %>%
+  left_join(., dplyr::select(d, GO_term, Term2, slim_term, comb), by=c("goID"="GO_term")) %>%
+  arrange(comb) %>%
+  mutate(goID  = fct_inorder(goID ))
+
+############
+# PLOTTING #
+############
+# this is a lollipop plot with the size representing gene overlap and length p-value
+# the color represent higher level GO categories
+# however at the moment there is too many categories, 
+# probably they will need manual cu-ration in a final step before they are publication ready
+p <- ggplot(df_, aes(y = -log10(`P-value`), x = goID, col = comb)) +
+    geom_col(width = .05, show.legend = F) +
+    geom_point(aes(size = `percentage%`)) + theme_classic() + 
+    theme(legend.position = "none")
+    scale_fill_manual(values = col, aesthetics = c("fill", "colour")) 
+```
+
+```{r get-enrichment-scores}
+##########################
+# GET GENE MODULE SCORES #
+##########################
+# gets the genes that are apart of the pathway and gets average expression value for those genes
+get_module.fun <- function(term, module){
+  module <- enrich_df %>%
+    bind_rows() %>%
+    mutate(Term = ifelse(grepl("GO",.$Term), str_match(.$Term, "^(.+?)\\s\\((.+)\\)$")[,2], .$Term) ) %>%
+    arrange(Adjusted.P.value) %>%
+    filter(module == module) %>%
+    filter(Term == term) %>% 
+    .$Genes %>% .[1] %>%
+    str_split_1(., ";")
+}
+
+map_df <- enrich_df %>%
+  bind_rows() %>%
+  mutate(Term = ifelse(grepl("GO",.$Term), str_match(.$Term, "^(.+?)\\s\\((.+)\\)$")[,2], .$Term) ) %>%
+  group_by(module, db) %>% 
+  top_n(., -5, Adjusted.P.value) %>% 
+  ungroup() %>%
+  mutate("MS"= paste0("MS", 1:nrow(.))) %>%
+  mutate(Genes = map(Genes, ~str_split_1(.x, ";"))) %>% # str_trim(
+  #mutate(Genes = map(Genes, ~str_trim(.x))) %>%
+  select(., Term, MS, module, db, Genes) %>%
+  mutate(MS = setNames(.[["MS"]], .$Term))
+
+# l <- map2(terms, mod, ~get_module.fun(.x, .y))
+l <- pmap(map_df, ~get_module.fun(..1, ..2)) %>% set_names(., map_df$Term)
+
+
+# Manual selection of interesting terms
+t <- c("skin development","Salmonella infection", "peptide cross-linking", 
+  "extracellular matrix organization", "collagen fibril organization")
+l <- l[t]
+
+# DATA <- select(DATA, -starts_with("MS_"))
+# https://www.waltermuskovic.com/2021/04/15/seurat-s-addmodulescore-function/
+DATA <- AddModuleScore(DATA, features = l, ctrl = 5, name = "MS", seed = 1)
+```
+
+
+
+```{r Correlation-heatmap-Function, fig.width=17, fig.height=15}
+#######################
+# ADD MODULES TO DATA #
+#######################
+# get module eigengenes and gene-module assignment tables
+MEs <-  DATA@misc[["vis"]][["MEs"]]# GetMEs(DATA) 
+
+# add the MEs to the seurat metadata so we can plot it with Seurat functions
+DATA@meta.data <- cbind(DATA@meta.data, MEs)
+##############
+# DATA PREPP #
+##############
+# cur_enrich <- c("MS3", "MS12","MS16", "MS17", "MS23", "MS28", "MS37", "MS48")
+# cur_enrich <- c("MS22", "MS12","MS27", "MS53")
+# cur_enrich <- c("MS2","MS37","MS27","MS24","MS15","MS45", "MS53", "MS47", "MS51")
+# cur_enrich <- colnames(SM.data)[-1] %>% split(., ceiling(seq_along(.)/5))
+
+taxa <- c('L. crispatus/acidophilus','L. iners','L. jensenii',
+       'L. gasseri/johnsonii/taiwanensis','L. reuteri/oris/frumenti/antri',
+        'Gardnerella','Prevotella','Atopobium','Sneathia','Megasphaera','Streptococcus',
+        'Anaerococcus','Escherichia/Shigella','Dialister','Mycoplasma',
+        'Bifidobacterium')
+gr <- "groups"
+
+# get bacterial abundance
+bact <- datasets[["ASV_Luminal_raw_counts"]] %>% 
+   pivot_longer(-1, names_to = "ID") %>% 
+   mutate(Genus_taxa_luminal = ifelse(.$Genus_taxa_luminal %in% taxa, .$Genus_taxa_luminal, "other")) %>%
+   filter(ID %in% sample_id) %>%
+   summarize(value = sum(value), .by = c("Genus_taxa_luminal", "ID")) %>%
+   {. ->> bact_count} %>%
+   group_by( ID ) %>%
+   mutate(value = value/sum(value)) %>%
+   filter(Genus_taxa_luminal %in% taxa) %>%
+   pivot_wider(id_cols=ID, names_from = "Genus_taxa_luminal")
+
+bact_count <- bact_count %>% pivot_wider(id_cols=ID, names_from = "Genus_taxa_luminal")
+
+# add bact and Var to DATA
+DATA <- DATA %>% 
+  #select(-any_of(taxa)) %>%
+  left_join(., bact, by=c( "orig.ident"="ID")) %>%
+  left_join(., select(meta, ID, Nugent="Nugent_Score_v3", sexwork_months, age, Estradiol="Plasma_S_Estradiol_pg_mL_v3"), by=c( "orig.ident"="ID"))
+
+############
+# FUNCTION #
+############
+ModuleEnrichCorrelation <- function(cur_enrich, traits, gr, star = F, cor_val = T, mean_val=T){
+  # GET CORELATIONS
+  mods <- cur_enrich
+  
+  if(mean_val){
+    temp <-  DATA@meta.data[, c(cur_enrich, gr, "orig.ident", traits)]
+    temp <- summarise(temp, across(everything(), .fns = mean), .by = any_of(c("orig.ident", gr, traits)))
+    MEs <- temp[,cur_enrich]
+    trait_df <- temp[,traits]
+    meta <- temp
+  }else{
+    MEs <-  DATA@meta.data[, cur_enrich]
+    trait_df <- DATA@meta.data[, traits]
+    meta <- DATA@meta.data
+    }
+      if (length(traits == 1)) {
+          trait_df <- data.frame(x = trait_df)
+          colnames(trait_df) <- traits
+      }
+    
+  # create empty lists:
+      cor_list <- list()
+      pval_list <- list()
+      fdr_list <- list()
+      # do correlation matrix with all spots:
+      temp <- Hmisc::rcorr(as.matrix(trait_df), as.matrix(MEs), 
+          type = "spearman")
+      cur_cor <- temp$r[traits, mods]
+      cur_p <- temp$P[traits, mods]
+      p_df <- cur_p %>% reshape2::melt()
+      if (length(traits) == 1) {
+          tmp <- rep(mods, length(traits))
+          tmp <- factor(tmp, levels = mods)
+          tmp <- tmp[order(tmp)]
+          p_df$Var1 <- traits
+          p_df$Var2 <- tmp
+          rownames(p_df) <- 1:nrow(p_df)
+          p_df <- dplyr::select(p_df, c(Var1, Var2, value))
+      }
+    # save results of all spots corelations to list:
+    p_df <- p_df %>% dplyr::mutate(fdr = p.adjust(value, method = "fdr")) %>% 
+          dplyr::select(c(Var1, Var2, fdr))
+      cur_fdr <- reshape2::dcast(p_df, Var1 ~ Var2, value.var = "fdr")
+      rownames(cur_fdr) <- cur_fdr$Var1
+      cur_fdr <- cur_fdr[, -1]
+      cor_list[["all_cells"]] <- cur_cor
+      pval_list[["all_cells"]] <- cur_p
+      fdr_list[["all_cells"]] <- cur_fdr
+      trait_df <- cbind(trait_df, meta[, gr])
+      colnames(trait_df)[ncol(trait_df)] <- "group"
+      MEs <- cbind(as.data.frame(MEs), meta[, gr])
+      colnames(MEs)[ncol(MEs)] <- "group"
+    group_names <- levels(as.factor(meta[, gr]))
+        
+    trait_list <<- dplyr::group_split(trait_df, group, .keep = FALSE) %>% set_names(., group_names) %>% keep(., ~all(nrow(.x) >= 4))
+    ME_list <<- dplyr::group_split(MEs, group, .keep = FALSE) %>% set_names(., group_names) %>% keep(., ~all(nrow(.x) >= 4))
+
+      for (i in names(trait_list)) {
+          temp <- Hmisc::rcorr(as.matrix(trait_list[[i]]), as.matrix(ME_list[[i]]), type = "spearman")
+          cur_cor <- temp$r[traits, mods]
+          cur_p <- temp$P[traits, mods]
+          p_df <- cur_p %>% reshape2::melt()
+          if (length(traits) == 1) {
+              tmp <- rep(mods, length(traits))
+              tmp <- factor(tmp, levels = mods)
+              tmp <- tmp[order(tmp)]
+              p_df$Var1 <- traits
+              p_df$Var2 <- tmp
+              rownames(p_df) <- 1:nrow(p_df)
+              p_df <- dplyr::select(p_df, c(Var1, Var2, value))
+          }
+          p_df <- p_df %>% 
+            dplyr::mutate(fdr = p.adjust(value, method = "fdr")) %>% 
+            dplyr::select(c(Var1, Var2,fdr))
+          cur_fdr <- reshape2::dcast(p_df, Var1 ~ Var2, value.var = "fdr")
+          rownames(cur_fdr) <- cur_fdr$Var1
+          cur_fdr <- cur_fdr[, -1]
+          cor_list[[i]] <- cur_cor
+          pval_list[[i]] <- cur_p
+          fdr_list[[i]] <- as.matrix(cur_fdr)
+      }
+      mt_cor <- list(cor = cor_list, pval = pval_list, fdr = fdr_list)
+      #return(mt_cor)
+  
+      # PLOT CORELATIONS
+      col <- rev(c("#B2182B","#D6604D","#F4A582","#FDDBC7","#F7F7F7","#D1E5F0","#92C5DE","#4393C3","#2166AC"))
+      library("ComplexHeatmap")
+      P <- names(ME_list) %>%
+        set_names() %>%
+        imap(., ~Heatmap(na.omit(mt_cor$cor[[.x]]),
+                         #col =circlize::colorRamp2(c(1, .75, .5, .25, 0, -.25, -.5, -.75, -1), rev(col)),
+                         col =circlize::colorRamp2(c(1,.5, 0, -.5, -1),hcl_palette ="RdBu", reverse = T), 
+                         row_names_gp = gpar(fontface = "italic"),
+                         show_row_dend = F, show_column_dend = F, 
+                         column_names_side = "top", column_names_rot = 0, 
+                         name = .y,
+                         column_names_centered = T,
+                         
+                         cell_fun = stars <- function(j, i, x, y, w, h, fill) {
+                           # add value to min and max cor value:
+                                if(cor_val){
+                                  if(!is.na(mt_cor$cor[[.x]][i, j]) & mt_cor$cor[[.x]][i, j] == max(mt_cor$cor[[.x]], na.rm = T)) {
+                                    grid.text( round(max(mt_cor$cor[[.x]], na.rm = T), digits = 1), x, y)}
+                                  if(!is.na(mt_cor$cor[[.x]][i, j]) & mt_cor$cor[[.x]][i, j] == min(mt_cor$cor[[.x]], na.rm = T)) {
+                                    grid.text(round(min(mt_cor$cor[[.x]], na.rm = T), digits = 1), x, y)}
+                                  }else{NULL} 
+                           # add significans stars:
+                                if(star){
+                                  if(mt_cor$fdr[[.x]][i, j] < 0.001) {
+                                    grid.text( round(mt_cor$cor[[.x]][i, j], digits = 1), x, y)} # grid.text("***", x, y)} #star vs cor 
+                                  else if(mt_cor$fdr[[.x]][i, j] < 0.05) {
+                                    grid.text( round(mt_cor$cor[[.x]][i, j], digits = 1), x, y)} # grid.text("*", x, y)} # 
+                                  }else{NULL} }
+                         ) )
+      l <- Legend(col_fun = circlize::colorRamp2(c(1,.5, 0, -.5, -1),hcl_palette ="RdBu"),
+                  legend_height = unit(7, units = "cm"), legend_width = unit(.5, units = "cm"))
+      
+      H_grob <- map(names(ME_list), ~grid.grabExpr(draw(P[[.x]], column_title=.x, show_heatmap_legend = FALSE)) ) 
+      
+      p <- wrap_plots(c(H_grob, list(grid.grabExpr(draw(l)))), ncol = 4, heights = 4)
+    return(tibble(plot = list(p), cor_df = list(mt_cor)))
+  
+}
+
+############
+# PLOTING #
+############
+# plot all enrichment modules
+# cur_enrich <- c("SM1","SM2", "SM3","SM4")
+# p <- map(cur_enrich, ~ModuleEnrichCorrelation(.x, traits, gr="layers", cor_val = T)) %>% bind_rows()
+
+```
+
+```{r Module-Bact-corelation, fig.width=17, fig.height=15}
+cur_enrich <- c("SM1","SM2", "SM3","SM4")
+traits <- taxa
+p <- ModuleEnrichCorrelation(cur_enrich, traits, gr="layers", cor_val = F, star = T, mean_val=T)
+
+# dev.new(width=17, height=15, noRStudioGD = TRUE)
+p$plot[[1]]
+# ggsave("./Figures/06/ModuleCor_Bact.png", p$plot[[1]], width = 17, height = 15, limitsize = F, bg="white")
+```
+
+```{r Module-Var-Correlation, fig.width=17, fig.height=7}
+traits <- c("Nugent", "sexwork_months","age", "Estradiol")
+p <- ModuleEnrichCorrelation(cur_enrich, traits, gr="layers", cor_val = F, star = T, mean_val=T)
+
+# dev.new(width=17, height=15, noRStudioGD = TRUE)
+p$plot[[1]]
+
+# ggsave("./Figures/06/ModuleCor_Var.png", p$plot[[1]], width = 17, height = 7, limitsize = F, bg="white")
+```
+
+```{r Enrichment-Bact-Correlation, fig.width=20, fig.height=15}
+# cur_enrich <- c("MS2", "MS22", "MS24", "MS12", "MS53")
+# cur_enrich <- c("MS37","MS37", "MS27","MS12", "MS53")
+cur_enrich <- c("MS1","MS2", "MS3","MS4", "MS5")
+traits <- taxa
+p <- ModuleEnrichCorrelation(cur_enrich, traits, gr="layers", cor_val = F, star = T, mean_val=T)
+
+# dev.new(width=20, height=15, noRStudioGD = TRUE)
+p$plot[[1]]
+
+# ggsave("./Figures/06/EnrichCor_Bact.png", p$plot[[1]], width = 20, height = 15, limitsize = F, bg="white")
+```
+
+
+```{r eval=FALSE}
+# to double check validity of correlation
+df <- cbind(ME_list[["10"]],trait_list[["10"]], DATA %>% filter(layers == "10") %>% .[[c("orig.ident", "groups")]] )
+
+  ggplot(df, aes(x=Sneathia, y=MS27, colour = groups)) +
+  
+  geom_jitter( alpha=.3) +
+    geom_boxplot(aes(group = `orig.ident`), fill= "transparent", width=0.01) 
+  
+df <- df %>% summarise(across(everything(), .fns = mean), .by = c("orig.ident", "groups")) 
+  
+temp <- Hmisc::rcorr(as.matrix(df[["Prevotella"]]), as.matrix(df[["MS27"]]))
+```
+
+```{r mantel-test, eval=FALSE}
+# NOT USED
+# seems that using spearman which is rank based is also quite appropriate for abundance data
+# We'll use the Euclidean distance for continuous variables
+env_var <- DATA %>%
+    summarise(., across(any_of(MS), .fns = mean), .by = any_of(c("orig.ident", "layers"))) %>%
+    filter(grepl(paste0(l), .$layers)) %>%
+    split(~layers, drop = T) %>%
+    map(., ~ .x %>%
+        column_to_rownames(., var = "orig.ident") %>% 
+        select(., -layers)) #%>%
+    #map(., ~dist(.x, method = "euclidean") )
+  
+
+bact_count <- column_to_rownames(bact_count,var = "ID")
+
+
+# Initialize a list to store the results
+mantel_results <- list()
+
+
+# Loop through each environmental variable and each taxon
+for (clus in names(env_var)[1]) { # names(env_var)
+  # create empty lists:
+  clus_list <- list()
+  cor_list <- list()
+  pval_list <- list()
+  taxa_list <- list()
+  fdr_list <- list()
+  for (taxon in colnames(bact_count)[1:6]) {
+    for (var in colnames(env_var[[clus]])[1:2]) {
+      
+      # Extract the vector for the current taxon
+      taxon_vector <- bact_count[, taxon]
+      
+      # Extract the vector for the current environmental variable
+      env_vector <- env_var[[clus]][, var]
+      
+      # Compute distance matrices (Euclidean distance is used for both in this case)
+      taxon_dist <- vegdist(taxon_vector, method = "bray")
+      env_dist <- dist(env_vector, method = "euclidean")
+      
+      # Perform the Mantel test
+      temp <- mantel(taxon_dist, env_dist, method = "spearman")
+      
+      # Store the results in a list with proper labeling
+      #result_label <- paste("clus:", clus, "- Taxon:", taxon, "- Env Var:", env_var)
+      #mantel_results[[result_label]] <- mantel_test
+      
+    
+      cur_cor <- temp$statistic
+      cur_p <- temp$signif
+      
+      #cur_fdr <- cur_fdr[, -1]
+      cor_list <- c(cor_list, cur_cor)
+      pval_list <- c(pval_list, cur_p)
+      taxa_list <- c(taxa_list, taxon)
+      print("hello")
+    }
+    print("test")
+    clus_list[[clus]] <- tibble("cor"= cor_list, "pval"=pval_list, "taxa"=taxa_list)
+  }
+}
+```
+
+
+```{r correlation-dotplots, fig.width=17, fig.height=4}
+#######################
+# CORRELATION DOTPLOT #
+#######################
+cols <- c(rep(c("#56B4E9"), 4), rep(c("#009E73"), 6), rep(c("#CC79A7"),6), rep(c("#FC8D62"),5)) %>% set_names(., sample_id)
+
+plot_cor.fun <- function(l, MS, taxa=NULL){
+  if(is.null(taxa)){taxa <- colnames(bact)[-1]}
+  # d <<- DATA %>%
+  #   mutate(gr = paste0(.$orig.ident,"_", .$layers)) %>%
+  #   DotPlot(., features=MS, group.by = 'gr', dot.min=0.1) %>%
+  #   .$data %>%
+  #   separate_wider_delim(., id, "_", names = c("id","layers")) %>%
+  #   filter(grepl(paste0(l), .$layers)) %>%
+  #   left_join(., select(bact,ID,any_of(taxa)), by=c( "id"="ID")) %>%
+  #   pivot_longer(cols = -c(1:6)) %>%
+  #   split(~layers) %>%
+  #   map(., ~mutate(.x, txt = ifelse(value > 0.05, .$id, NA)))
+    
+  d <<- DATA %>%
+    summarise(., across(any_of(MS), .fns = mean), .by = any_of(c("orig.ident", "layers"))) %>%
+    filter(grepl(paste0(l), .$layers)) %>%
+    left_join(., select(bact,ID,any_of(taxa)), by=c( "orig.ident"="ID")) %>%
+    #left_join(., bact, by=c( "id"="ID")) %>%
+    pivot_longer(cols = any_of(MS), names_to = "features.plot", values_to = "avg.exp") %>%
+    pivot_longer(cols = any_of(taxa)) %>%
+    mutate(name = factor(name, levels = taxa)) %>%
+    split(~layers, drop = T) %>%
+    map(., ~mutate(.x, txt = ifelse(value > 0.05, .$orig.ident, NA)))
+  
+  p <- imap(d, ~ggplot(.x, aes(x=value, y=avg.exp)) + 
+      stat_cor( aes(x=value, y=avg.exp), method = "spearman",
+                show.legend = F, label.x = .3, size=4) +
+      geom_point( aes( col=orig.ident), show.legend = F, size=4) + # size=pct.exp,
+      geom_text(aes(label= txt), colour = "gray60", size=5, vjust = -0.8) +
+      theme_minimal() + coord_cartesian(clip = "off") + 
+      scale_colour_manual(values = cols) +  # limits = c(0,2),oob = scales::squish
+      ggtitle(.y)+
+      theme(axis.text = element_text(size=rel(1) ),
+            title = element_text(size=16 ),
+            strip.text.x = element_text(size=14, face = "italic"),
+            panel.spacing.x = unit(1, "lines"),
+            axis.title.x = element_blank(), plot.margin = unit(c(.2,1,0,.2), "lines") ) +
+      facet_wrap(~name, ncol = 4) +
+      scale_x_continuous(labels = scales::percent)
+      #scale_x_continuous(sec.axis = sec_axis(~ . , name = .y, breaks = NULL, labels = NULL)) 
+      )
+  return(p)
+}
+
+# cur_enrich <- c("MS2", "MS22", "MS24", "MS12", "MS53")
+# cur_enrich <- c("MS2","MS37","MS27","MS24", "MS53", "MS47", "MS51")
+# cur_enrich <- c("MS15", "MS45")
+
+cur_enrich <- c("SM4")
+epi <- "Superficial|Basal|Upper IM|Lower IM"
+sub <- "Basal|^1$|^2$|^10$"
+
+taxa <- c("L. crispatus/acidophilus","Gardnerella", "Prevotella", "Atopobium") # , "L. gasseri/johnsonii/taiwanensis"
+p <- plot_cor.fun(l=sub, MS=cur_enrich, taxa=taxa)
+
+# dev.new(width=17, height=4, noRStudioGD = TRUE)
+p$`1`
+p$`10`
+
+# ggsave("./Figures/06/Dotplot_Cor_Bact_Clus10.png", p$`10`, width = 17, height = 4, limitsize = F, bg="white")
+# ggsave("./Figures/06/Dotplot_Cor_Bact_Clus1.png", p$`1`, width = 17, height = 4, limitsize = F, bg="white")
+
+# pdf("./Figures/03/Corelation_dotplot_MS12.pdf", width = 17, height = 4*1)
+# p
+# dev.off()
+
+```
+
+```{bash GeneSCF, eval=FALSE}
+# this was an attempt to replicate the figures in the manuscript i reviewed, 
+# however after spending 1 and a half day of making this code work in a docker environment, 
+# I realized that this program does not provide the hierarchical relationship between GO terms
+###########################
+# PREPARE GENE LIST FILES #
+###########################
+cd /Users/vilkal/work/Brolidens_work/Projects/Spatial_Microbiota/results/07_GSEA_st_data
+
+pattern="*.txt"
+file_list=()
+
+while IFS= read -d $'\0' -r file ; do
+  name=$(basename "$file")
+  file_list=("${file_list[@]}" "$name")
+done < <(find . -type f -name "$pattern" -print0)
+
+echo "${file_list[@]}"
+
+for file in "${file_list[@]}" ; do
+  sed -i -e 's/"//g' "$file"
+  done
+  
+for file in find . -type f -name "$pattern" -print0 ; do
+  echo "$file"
+  #sed -i -e 's/"//g' "$file"
+  done
+  
+find . -name '*.txt' -print0 | 
+    while IFS= read -r '' line; do 
+        echo "$line"
+        sed -i -e 's/"//g' "$file"
+    done
+    
+for file in *.txt; do # Whitespace-safe but not recursive.
+    echo "$file"
+    sed -i -e 's/"//g' "$file"
+done
+
+cd geneSCF-master-source-v1.1-p2
+./geneSCF-master-source-v1.1-p2/geneSCF -m=normal -i=./Clus_4_outfile.txt -o=./output/ -t=sym -db=GO_BP -bg=20000 --plot=no -org=goa_human
+
+# program that clusters the genes according to enrichment 
+##################
+# INSTAL PROGRAM #
+##################
+# downloaded from git:
+https://github.com/genescf/GeneSCF/archive/refs/tags/v1.1-p3.beta.tar.gz
+
+# go to location of the downloaded program
+cd /Users/vilkal/work/Brolidens_work/Projects/GeneSCF-1.1-p3.beta
+
+###########################
+# SET UP DOCKER CONTAINER #
+###########################
+# start a ubuntu docker container in the "bin" folder in bash mode:
+docker pull bryanfisk/genescf:final # pull geneSCF container image from docker
+
+docker run bryanfisk/genescf:final # create the container from the image
+docker ps -a --format "table {{.Image}}\t{{.ID}}\t{{.Names}}" # get container name
+docker start infallible_ganguly 
+docker exec -it docker infallible_ganguly sh # run in interactive mode
+mkdir -p /GeneSCF/input # create a new directory to copy files to
+
+# get name and id of current container
+docker ps 
+
+# open a new terminal and go to location of the gene list files
+# copy files from host to container:
+tar -cv *.txt | docker exec -i infallible_ganguly tar x -C /usr/local/bin
+
+for f in *.txt; do mv "$f" "$(echo "$f" | sed s/_outfile.txt//)"; done
+
+###############
+# RUN GeneSCF #
+###############
+# this only removed all the information from the files, so I did not do this for GO
+# update to latest GO BP version:
+#./prepare_database -db=GO_BP -org=goa_human
+# update to latest KEGG version:
+/prepare_database -db=KEGG -org=hsa
+
+# run the analysis
+# ./geneSCF -m=normal -i=./test/H0.list -o=./test/output/ -t=sym -db=GO_BP -bg=20000 --plot=no -org=goa_human
+# NB! the output directory have to already exist
+mkdir 
+./geneSCF -m=normal -i=../Clus_4 -o=../output/ -t=sym -db=GO_BP -bg=20000 --plot=no -org=goa_human
+./geneSCF -m=normal -i=../Clus_4 -o=../output/ -t=sym -db=KEGG -bg=20000 --plot=no -org=hsa
+
+# copy the results from the container to the local system:
+docker cp infallible_ganguly:/usr/local/bin/output/Clus_4_GO_BP_goa_human_functional_classification.tsv .
+docker cp infallible_ganguly:./H0.list_GO_BP_functional_classification.tsv .
+
+```
+
+```{r eval=FALSE}
+###########################
+# VIOLIN PLOT ENRICH DEGs #
+###########################
+#  print(n = 54, map_df)
+t <- map_df %>% filter(MS %in% cur_enrich) 
+# f <- t$Genes[[7]]
+f <- c("LRP1","TIMP2","TIMP3","TIMP1","RECK")
+DAT <- DATA %>%
+  filter((grepl("^1$|^4$|^0$|^3$|^2$|^10$", .$Clusters))) %>%
+  #filter((grepl("^5$|^6$|7|8", .$Clusters))) %>%
+  mutate(., FetchData(., vars = c(f)) ) %>%
+  #violin.fun(., feature=f,facet="layers", group.by = "groups") 
+  violin.fun(., feature=f,facet="feature", group.by = "groups") 
+  VlnPlot(., features = f, ncol = 6, group.by = "groups")
+```
+
+
+```{r enrichment-modules, eval=FALSE}
+##############
+# FUNCTIONS #
+#############
+get_avg_id.fun <- function(col, dot, scale=TRUE){
+  if(scale){avg <- "avg.exp.scaled"}else{avg <- "avg.exp"}
+  gr <- c(rep(c("L1"), 4), rep(c("L2"), 6), rep(c("L3"),6), rep(c("L4"),5)) %>% set_names(., sample_id)
+  p <- map(dot, ~as_tibble(pluck(.x, "data" ))) %>% map(., ~mutate(.x, avg.exp = setNames(.[[avg]], .$id)) )
+  
+  #id <- map(col, ~filter(DATA, sp_annot == "SubMuc")) %>% map(~.x %>% summarize(avg.exp = median(MS22), .by = "orig.ident") %>% rename(id="orig.ident")) %>%
+    # median
+  id <- map(col, ~summarize(DATA, avg.exp = median(.data[[.x]]), .by = "orig.ident")) %>% map(., ~rename(.x, id="orig.ident")) %>%
+    # avg.exp
+  #id <- map(col, ~DotPlot(DATA, features=.x, group.by = 'orig.ident')$data) %>% 
+    map(~ .x %>% mutate(gr = gr[ as.character(.$id) ])  %>% 
+           group_by(., gr)) %>%
+    map2(., p, ~slice(.x, which.min(abs(avg.exp - .y[[avg]][cur_group_id()] ))) ) %>% map(., ~as.character(.$id))
+  print( id )
+  return(id)
+}
+##########################
+# GET GENE MODULE SCORES #
+##########################
+# gets the genes that were 
+get_module.fun <- function(term, module){
+  module <- enrich_df %>%
+    bind_rows() %>%
+    mutate(Term = ifelse(grepl("GO",.$Term), str_match(.$Term, "^(.+?)\\s\\((.+)\\)$")[,2], .$Term) ) %>%
+    arrange(Adjusted.P.value) %>%
+    filter(module == module) %>%
+    filter(Term == term) %>% 
+    .$Genes %>% .[1] %>%
+    str_split_1(., ";")
+}
+
+
+
+map_df <- enrich_df %>%
+  bind_rows() %>%
+  mutate(Term = ifelse(grepl("GO",.$Term), str_match(.$Term, "^(.+?)\\s\\((.+)\\)$")[,2], .$Term) ) %>%
+  group_by(module, db) %>% 
+  top_n(., -5, Adjusted.P.value) %>% 
+  ungroup() %>%
+  mutate("MS"= paste0("MS", 1:nrow(.))) %>%
+  mutate(Genes = map(Genes, ~str_split_1(.x, ";"))) %>%
+  select(., Term, MS, module, db, Genes) %>%
+  mutate(MS = setNames(.[["MS"]], .$Term))
+
+# l <- map2(terms, mod, ~get_module.fun(.x, .y))
+l <- pmap(map_df, ~get_module.fun(..1, ..2)) %>% set_names(., map_df$Term)
+
+# DATA <- select(DATA, -starts_with("MS_"))
+# https://www.waltermuskovic.com/2021/04/15/seurat-s-addmodulescore-function/
+DATA <- AddModuleScore(DATA, features = l, ctrl = 5, name = "MS", seed = 1)
+# SM.data <- select(DATA@meta.data, contains("MS")) %>% as_tibble(rownames = "barcodes") 
+# map(colnames(SM.data)[-1], ~max(SM.data[[.x]]))
+
+enrich_modules_plot <- function(col, title, SM, ..., min_v=-1, max_v=2.5, id=NULL, dot_scaled=TRUE ){
+  # dots 
+  dot <<-  map(col, ~DotPlot(DATA, features=.x, group.by = 'groups', dot.min=0.1, scale = dot_scaled) + 
+                 scale_colour_gradientn(colours = cols, limits = c(min_v,max_v),oob = scales::squish) +
+                 scale_size_continuous(limits = c(0,100),range = c(.1,6)) + guides(colour = "none") )
+  if(is.null(id)){id <- get_avg_id.fun(col, dot, scale=dot_scaled)}else{id <- map(title, ~id)}
+  #dot <<-  DotPlot(DATA, features=col, group.by = 'groups', dot.min=0.1)$data %>% split(~features.plot)
+  
+  # plotting
+  p <<- map2(col, id, ~plot_spatial.fun(DATA, sampleid=.y, max_val = 2.5, 
+                 colors = cols, save_space = F, lab = T,
+                 ncol = 4, annot_line = .1,
+                 geneid=.x, 
+                 point_size = 0.2, zoom="zoom") + 
+        theme(plot.margin = unit(c(.9,0,0,0), "lines")) )
+  # legend
+  legend_d <- get_legend(dot[[1]] + theme(legend.title = element_blank())) # legend.margin=margin(0,0,0,0), 
+  legend_p <- get_legend(p[[1]] + theme(legend.justification="left",legend.title = element_blank()) )
+  legend <- plot_grid( legend_d, legend_p, ncol = 1)
+  
+  # add
+  n <- pmap(list(p, dot), ~ggdraw(..1 + theme(legend.position = "none") ) +
+    draw_plot(
+      
+      {..2 + theme_void() +  coord_flip(clip = "off") + 
+          theme(legend.position = "none") }, #title= element_text(face = 'plain', size = 7, hjust = 0), 
+      # {ggplot() + geom_point(data = .y, aes(x=id, y=features.plot, size=pct.exp, col=avg.exp), show.legend = F,) + 
+      #    theme_void() + coord_cartesian(clip = "off") + scale_colour_gradientn(colours = cols) }, # limits = c(0,2),oob = scales::squish
+      # The distance along a (0,1) x-axis to draw the left edge of the plot
+      x = 0.7, # The distance along a (0,1) y-axis to draw the bottom edge of the plot
+      y = .86, # The width and height of the plot expressed as proportion of the entire ggdraw object
+      width = 0.2, height = 0.1) ) %>%
+    
+   #map2(.,title, ~.x + plot_annotation(title = .y)) %>% wrap_plots(., ncol = 1) %>%
+   plot_grid(plotlist = ., ncol = 1, labels = title, label_size = 7, label_x = .15, label_fontface = "plain", hjust = 0) %>%
+      #wrap_plots(., legend, ncol = 2, widths = c(1,.2))
+      plot_grid(., legend, ncol = 2, rel_widths = c(1,.2)) # %>%
+     #ggdraw(.) + draw_plot(legend_p, x = .9, y = .65, height = .2) + draw_plot(legend_d, x = .9, y = .1, height = .2)
+   #ggsave(filename=paste0("./Figures/03/","enrichment_module_",SM,".png"),n,  width = 8, height = 1.3*length(title), bg = "white", dpi = 500)
+  # dev.new(height=1.3*2, width=7, noRStudioGD = TRUE)
+  return(n)
+}
+
+# all top terms
+id <- c("P045","P026","P014","P067") %>% set_names()
+map_df %>% 
+  nest(data = -module) %>%
+  pmap(., ~enrich_modules_plot(..2$MS, ..2$Term, ..1, dot_scaled = FALSE))
+
+
+# plot dotplot of all terms in order to identify the ones differnig between groups:
+cols <- c("#5E4FA2","#3288BD","#ABDDA4","#E6F598","#FFFFBF","#FEE08B","#FDAE61","#F46D43","#D53E4F","#9E0142")
+cols <- c("#5E4FA2","#3288BD","white","#FFFFBF","#E6F598","#FEE08B","#FDAE61","#F46D43","#D53E4F","#9E0142")
+cols <- c("#D3D3D3","#EFEDF5","white","#DADAEB","#BCBDDC","#9E9AC8","#807DBA","#6A51A3","#54278F","#3F007D") #"#EFEDF5","#D3D3D3",
+min_v=-1
+max_v=2.5
+name=TRUE
+p <- split(map_df, ~module) %>% imap(~ .x %>% .$MS) %>% 
+  imap(., ~DotPlot(object=if(name){rename(DATA, !!! .x)}else{DATA}, 
+                   features=if(name){names(.x)}else{as.vector(.x)}, group.by = 'groups', dot.min=0.1, scale=FALSE) + 
+    scale_colour_gradientn(colours = cols, limits = c(min_v,max_v),oob = scales::squish) +
+    scale_size_continuous(limits = c(0,100),range = c(.1,6)) + coord_flip() + ggtitle(.y) )
+p[[4]]
+p_s[[4]]
+
+# select terms with differences between groups:
+terms <- c("MS2","MS37","MS27","MS24","MS15","MS45", "MS53", "MS47", "MS51") #"MS16", "MS17", "MS15","MS23", "MS28", "MS37", "MS48", "MS51", "MS53"
+terms <- c("extracellular matrix organization", "Protein digestion and absorption","SMAD4",
+           "Oxidative phosphorylation","ESR1","cytoplasmic translation",
+           "keratinocyte differentiation","Pathogenic Escherichia coli infection", "ETS1",
+           "RNA processing", "RARA", "NFKB1")
+# NB! have look at the max and min values and check that the dot legend is similar to the tissue legend 
+# filter the terms of intrest and plot on tissue
+map_df %>%
+  filter(MS %in% terms) %>%
+  #filter(Term %in% terms) %>%
+  {. ->> MS_df} %>%
+  enrich_modules_plot(col=.[["MS"]], title=.$Term, SM="selection", dot_scaled=FALSE) 
+
+
+# dev.new(width = 7, height = 1.3*1, noRStudioGD = TRUE) 
+#  print(n = 54, map_df)
+id <- c("P050","P044","P004","P021")
+map_df %>% filter(MS == "MS27") %>%
+  enrich_modules_plot(col=.[["MS"]], title=.$Term, SM="s", dot_scaled = FALSE) + coord_fixed(ratio = 1 )# , id=id
+
+```
+
+```{r, eval=FALSE}
+# plot all samples to have a look at which are more representative 
+# dev.new(height=12.5, width=12.5, noRStudioGD = TRUE) 
+plot_spatial.fun(
+          #DATA@misc[["vis"]][["wgcna_metacell_obj"]],
+          DATA, 
+          assay="RNA",
+          sp_annot = T,
+          sampleid = sample_id, #c("P020", "P045", "P050", "P057"),
+          geneid = "SM1",
+          lab = T,
+          alpha = 1,
+          ncol = 4,
+          #max_val = 100,
+          point_size = .5,
+          save_space = F,
+          img_alpha = 0,
+          #colors = cols, # lightgray
+          zoom = NULL )
+```
+
+```{r Module-Trait-Correlation, eval=FALSE}
+# suspect that this is old and no longer used
+cur_traits <- c("Nugent", "sexwork_months","age", "Estradiol")
+cur_bact <- c('L. crispatus/acidophilus','L. iners','L. jensenii',
+       'L. gasseri/johnsonii/taiwanensis','L. reuteri/oris/frumenti/antri',
+        'Gardnerella','Prevotella','Atopobium','Sneathia','Megasphaera','Streptococcus',
+        'Anaerococcus','Escherichia/Shigella','Dialister','Mycoplasma',
+        'Bifidobacterium', 'Citrobacter/Klebsiella')
+
+bact <- datasets[["ASV_Luminal_raw_counts"]] %>% 
+   pivot_longer(-1, names_to = "ID") %>% 
+   mutate(Genus_taxa_luminal = ifelse(.$Genus_taxa_luminal %in% cur_bact, .$Genus_taxa_luminal, "other")) %>%
+   summarize(value = sum(value), .by = c("Genus_taxa_luminal", "ID")) %>%
+   group_by( ID ) %>%
+   mutate(value = value/sum(value)) %>%
+   filter(ID %in% sample_id) %>%
+   pivot_wider(id_cols=ID, names_from = "Genus_taxa_luminal")
+
+DATA <- DATA %>% 
+  select(-any_of(cur_traits), -any_of(cur_bact)) %>%
+  left_join(., select(meta, ID, Nugent="Nugent_Score_v3", sexwork_months, age, Estradiol="Plasma_S_Estradiol_pg_mL_v3"), by=c( "orig.ident"="ID")) %>% 
+  left_join(., bact, by=c( "orig.ident"="ID"))
+
+# if any of the traits are categorical they need to be made into factors
+# it only makes sense to use categorical values if they only have two categories or they represent a squential specter of something
+# DATA <- DATA %>%
+#   mutate(across(any_of(cur_traits), ~factor(.x)))
+
+
+get_trait_corr.fun <- function(cur_traits, gr = 'layers', star = F, cor_val = F){
+
+  DATA <- hdWGCNA::ModuleTraitCorrelation(
+    DATA,
+    cor_method = "spearman",
+    traits = cur_traits,
+    group.by=gr
+  )
+  
+  # get the mt-correlation results
+  mt_cor <- hdWGCNA::GetModuleTraitCorrelation(DATA)
+  
+  t(head(mt_cor$cor$Superficial))
+  
+  # P <- PlotModuleTraitCorrelation(
+  #   DATA,
+  #   label = 'fdr',
+  #   label_symbol = 'stars',
+  #   text_size = 2,
+  #   text_digits = 2,
+  #   text_color = 'white',
+  #   high_color = 'red',
+  #   mid_color = 'white',
+  #   low_color = '#0D8CFF',
+  #   plot_max = 0.2,
+  #   combine=F
+  # )
+  
+  # ComplexHeatmap
+  col <- rev(c("#B2182B","#D6604D","#F4A582","#FDDBC7","#F7F7F7","#D1E5F0","#92C5DE","#4393C3","#2166AC"))
+  library("ComplexHeatmap")
+  P <- ord[1:11] %>%
+    set_names() %>%
+    imap(., ~Heatmap(na.omit(mt_cor$cor[[.x]]),
+                     #col =circlize::colorRamp2(c(1, .75, .5, .25, 0, -.25, -.5, -.75, -1), rev(col)),
+                     col =circlize::colorRamp2(c(1,.5, 0, -.5, -1),hcl_palette ="RdBu", reverse = T), 
+                     show_row_dend = F, show_column_dend = F, 
+                     column_names_side = "top", column_names_rot = 0, 
+                     name = .y,
+                     column_names_centered = T,
+                     
+                     cell_fun = stars <- function(j, i, x, y, w, h, fill) {
+                       # add value to min and max cor value:
+                       if(cor_val){
+                         if(!is.na(mt_cor$cor[[.x]][i, j]) & mt_cor$cor[[.x]][i, j] == max(mt_cor$cor[[.x]], na.rm = T)) {
+                           grid.text( round(max(mt_cor$cor[[.x]], na.rm = T), digits=1), x, y)}
+                         if(!is.na(mt_cor$cor[[.x]][i, j]) & mt_cor$cor[[.x]][i, j] == min(mt_cor$cor[[.x]], na.rm = T)) {
+                           grid.text(round(min(mt_cor$cor[[.x]], na.rm = T), digits=1), x, y)}
+                         }else{NULL} 
+                       # add significans stars:
+                       if(star){
+                                                    if(mt_cor$fdr[[.x]][i, j] < 0.001) {
+                                                      grid.text("***", x, y)}
+                                                    else if(mt_cor$fdr[[.x]][i, j] < 0.01) {
+                                                      grid.text("**", x, y)}
+                                                    }else{NULL} }
+                     ) )
+  l <- Legend(col_fun = circlize::colorRamp2(c(1,.5, 0, -.5, -1),hcl_palette ="RdBu"),
+              legend_height = unit(7, units = "cm"), legend_width = unit(.5, units = "cm"))
+  
+  H_grob <- map(ord[1:11], ~grid.grabExpr(draw(P[[.x]], column_title=.x, show_heatmap_legend = FALSE)) ) 
+  
+  p <- wrap_plots(c(H_grob, list(grid.grabExpr(draw(l)))), ncol = 4, heights = 4)
+  return(tibble(plot = list(p), cor_df = list(mt_cor)))
+}
+
+p <- get_trait_corr.fun(cur_bact, star = F, cor_val = T)
+p <- get_trait_corr.fun(cur_traits, star = F, cor_val = T)
+p <- get_trait_corr.fun(cur_enrich, star = F, cor_val = T, gr = 'groups')
+
+# dev.new(width=17, height=15, noRStudioGD = TRUE)
+p$plot[[1]]
+
+ggsave("./Figures/hdWGCNA/ModuleTraitCor_Bact.png", p$plot[[1]], width = 17, height = 15, limitsize = F, bg="white")
+ggsave("./Figures/hdWGCNA/ModuleTraitCor_Var.png", p$plot[[1]], width = 12, height = 10, limitsize = F, bg="white")
+
+
+```
+
+
