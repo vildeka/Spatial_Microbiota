@@ -11,7 +11,7 @@ params:
 editor_options: 
   chunk_output_type: console
 ---
-## Heatmap of significant genes per cluster
+
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(
@@ -93,9 +93,11 @@ pseudo_DEGs <- readRDS(paste0(input_dir,"Pseudobulk_across_DEGs.RDS"))
 D <- DEGs_table %>%
   filter(., p_val_adj < 0.05) %>%
   filter(., !(grepl("0|^3|9|10|11|12", .$subgroup))) %>%
-  #filter(., cluster == "L4") %>%
+  filter(., cluster == "L4") %>%
   mutate(sp_annot = ifelse(grepl("\\d", .$layers), "SubMuc", "epi")) %>%
   split(~sp_annot) 
+
+# knitr::kable(D$epi)
 ```
 
 ```{r dot-plot, eval=FALSE}
@@ -168,15 +170,13 @@ genes <- DEGs_table %>% filter(gene %in% geneid) %>% filter(grepl("^1$|Basal", .
 (Immuno <- morf_DEGs_plot(genes = genes, clus="^1$|8"))
 ```
 
-
-```{r violin-plot, fig.width=4,fig.height=4}
+```{r violin-plot-data}
 ###############
 # VIOLIN PLOT #
 ###############
 # https://stackoverflow.com/questions/35717353/split-violin-plot-with-ggplot2
 
-feature <- c("IGHG4", "IGLC2", "IGHG1", "IGHA2", "IGHA1", "CD81", "IGKC", "JCHAIN")
-feature <- c("IGHA1","IGHG1", "CD81", "IGKC", "JCHAIN")
+feature <- c("IGHG4", "IGLC2", "IGHG1","IGHG2", "IGHA2", "IGHA1","IGHG3", "CD81", "IGKC", "JCHAIN")
 col <- c("L1"="#56B4E9","L2"="#009E73","L3"="#CC79A7", "L4"="#FC8D62")
 facet <- "layers"
 group.by <- "groups"
@@ -184,55 +184,33 @@ ncol <- 1
 
 DEGs_df <- DATA %>%
   #filter(!(grepl("\\d", .$layers))) %>%
-  filter((grepl("Basal|^1$", .$layers))) %>%
-  filter((grepl("L1|L2", .$groups))) %>%
+  filter(!(grepl("^11$|^12$", .$layers))) %>%
+  #filter((grepl("L1|L2", .$groups))) %>%
   mutate(., FetchData(., vars = c(feature)) ) %>%
   #mutate(across(any_of(feature), na_if, 0)) %>% # NB! removes zero values 
-  select(any_of(c(feature, facet, group.by, "layers"))) %>%
+  select(orig.ident, any_of(c(feature, facet, group.by, "layers"))) %>%
   pivot_longer(cols = any_of(feature), names_to = "feature", values_to = "val") %>%
   mutate(comb = paste0(.$groups, "_",.$layers)) %>%
-  mutate(groups = factor(.$groups, levels = sort(unique(.$groups))))
+  mutate(groups = factor(.$groups, levels = rev(names(col))))
 
-# groups on y-axis, genes on x axis
-# not used:
-violin_mean_plot <- function(DEGs_df){
-  m <- max(na.omit(DEGs_df[["val"]]))/1 # try e.g 2
-  DEGs_df %>%
-    ggplot(aes(y=.data[[group.by]], x=.data[["val"]], col=.data[[group.by]])) +
-    geom_violin() + # {if(length(feature == 1)) ggtitle(feature)} +
-    #geom_boxplot(fill = "transparent", notch = T, outlier.size = .5, outlier.colour = "red") +
-    geom_jitter(width = 0.2, height = 0.3, alpha = 0.2, size=.1) +
-    stat_summary(aes(x = val), fun=median, geom="crossbar", linewidth=.3, color="black") +
-    scale_color_manual(values = col) +
-    my_theme + NoLegend() + #xlim(c(0, m)) +
-    theme(text = element_text(size = 10)) +
-    #       axis.text.x = element_text(angle = 30, hjust=1),
-    #       plot.title = element_text(hjust = 0.5),
-    #       axis.title.y = element_blank(),
-    #       axis.title.x = element_blank()) +
-    #facet_wrap(~.data[[facet]], ncol = ncol, strip.position = c("right", "bottom", "left", "top"))
-    facet_grid(rows = vars(layers), cols = vars(feature)) #, strip.position = c("right", "bottom", "left", "top"))
-}
+```
 
-# dev.new(width=6.7, height=3, noRStudioGD = TRUE) 
-A <- violin_mean_plot(DEGs_df)
-# ggsave("./Figures/04/Fig_viol.png", A, width = 6.7, height = 3) #, dpi = 300
-
-# groups on x-axis, genes on x axis
-# used for figure 4
+```{r violin-function}
 violin_mean_plot <- function(DEGs_df){
   m <- max(na.omit(DEGs_df[["val"]]))/1 # try e.g 2
   DEGs_df %>%
     ggplot(aes(x=.data[[group.by]], y=.data[["val"]], col=.data[[group.by]])) +
-    geom_violin() + # {if(length(feature == 1)) ggtitle(feature)} +
-    stat_summary(aes(y = val), fun=median, geom="crossbar", linewidth=.3, color="black") +
+    #ggplot(aes(x=groups, y=val, col=groups)) +
+    #geom_violin() + # {if(length(feature == 1)) ggtitle(feature)} +
     #geom_boxplot(fill = "transparent", notch = T, outlier.size = .5, outlier.colour = "red") +
     geom_jitter(width = 0.3, height = 0.2, alpha = 0.2, size=.01) +
+    stat_summary(aes(y = val), fun=median, geom="crossbar", linewidth=.2, color="black") +
     scale_color_manual(values = col) + ylab("Expression") +
     my_theme + NoLegend() + #xlim(c(0, m)) +
     theme(text = element_text(size = 12),
           axis.line = element_blank(),
-          panel.border = element_rect(colour = "gray") ) +
+          #panel.border = element_rect(colour = "gray") 
+          ) +
     #       axis.text.x = element_text(angle = 30, hjust=1),
     #       plot.title = element_text(hjust = 0.5),
     #       axis.title.y = element_blank(),
@@ -240,10 +218,118 @@ violin_mean_plot <- function(DEGs_df){
     #facet_wrap(~.data[[facet]], ncol = ncol, strip.position = c("right", "bottom", "left", "top"))
     facet_grid(rows = vars(layers), cols = vars(feature)) #, strip.position = c("right", "bottom", "left", "top"))
 }
+```
 
-# dev.new(width=3.3, height=3, noRStudioGD = TRUE) 
-A <- violin_mean_plot(DEGs_df)
-# ggsave("./Figures/04/Fig_L1_L2_viol.png", A, width = 4, height = 4, dpi = 500) #, dpi = 300
+```{r plot-all-layers, fig.width=8,fig.height=7}
+feature_ <- c("IGHG4", "IGHG1", "IGHG2", "IGHA2", "IGHA1","IGHG3")
+P <- DEGs_df %>%
+    filter(feature %in% feature_) %>%
+    #filter(!grepl("^11$|^12$|^10$|9|^2|^0|^3|4", layers)) %>%
+    filter(!grepl("^11$|^12$", layers)) %>%
+    mutate(layers = factor(.$layers, levels = ord )) %>%
+    #filter(grepl(.x, groups)) %>%
+    {. ->> temp} %>%
+    violin_mean_plot() + theme_minimal() +
+    NoLegend()
+
+P <- P + coord_flip(clip = F)
+
+################################
+# VIOLIN PLOT WITH SIG. VALUES #
+################################
+library(ggpubr)
+features <- c("IGHG4", "IGHG1", "IGHG2", "IGHA2", "IGHA1","IGHG3")
+
+# feature_list <- list(features, features)
+# feature_list <- list(c("IGHG1", "IGHA2", "IGHA1","IGHG3"), c("IGHG4"))
+# gr <- set_names(c("L1","L4"))
+# 
+# D <- map2(gr, feature_list, ~ {
+#   D <- DEGs_table %>%
+#   filter(gene %in% .y) %>%
+#   filter(., !(grepl("0|^3|9|^10$|^11$|^12$|^4|^2", .$subgroup))) %>%
+#    filter(., (grepl(.x, .$comb))) 
+# })
+# 
+# D <- bind_rows(D)
+# D <- D$L1
+# D <- D$L4
+
+D <- DEGs_table %>%
+    filter(gene %in% features) %>%
+    #filter(., !(grepl("0|^3|9|^10$|^11$|^12$|^4|^2", .$subgroup))) #%>%
+    filter(!grepl("^11$|^12$", layers))
+    #filter(., (grepl("L1|L4", .$comb))) 
+
+sig_df <- D %>%
+  select(comb, p_val_adj, cluster, gene, layers) %>%
+  mutate(layers = factor(.$layers, levels = ord )) %>%
+  separate(comb, into = c("group1", "group2"), sep = "-") %>%
+  rename(feature = gene) %>%  # align names
+  mutate(step = paste0(feature, "_", layers)) %>%
+  mutate(p.adj.signif = case_when(
+    p_val_adj < 0.001 ~ "***",
+    p_val_adj < 0.01  ~ "**",
+    p_val_adj < 0.05  ~ "*",
+    TRUE              ~ "ns"
+  )) %>%
+  left_join(
+    temp %>%
+      group_by(feature, layers, groups) %>%
+      summarise(ymax = max(val, na.rm = TRUE), .groups = "drop"),
+    by = c("feature", "layers" = "layers", "group2" = "groups")
+  ) %>%
+  mutate(y.position = ymax + 0) %>%  # 0.5 above max point
+  filter(p.adj.signif != "ns")
+
+# dev.new(width=6.7, height=4.5, noRStudioGD = TRUE) 
+# dev.new(width=9, height=9, noRStudioGD = TRUE) 
+(plot <- P + ggpubr::stat_pvalue_manual(
+    sig_df,
+    step.group.by = "step",
+    step.increase = 0.09,
+    label = "p.adj.signif",
+    y.position = sig_df$y.position,   # use computed y
+    xmin = "group1",
+    xmax = "group2",
+    tip.length = 0.01,
+    coord.flip = TRUE
+    ))
+# ggsave("./Figures/04/sig_all_level_comp_IgG_IgA.png", plot, width = 9, height = 4.5)
+```
+
+```{r fig.width=6.5,fig.height=4}
+features <- c("IGHA1","IGHG1", "CD81", "IGKC", "JCHAIN")
+# dev.new(width=6.5, height=4, noRStudioGD = TRUE) 
+A1 <- DEGs_df %>%
+  filter((grepl("Basal|^1$", .$layers))) %>%
+  filter((grepl("L1|L2", .$groups))) %>%
+  filter(feature %in% features) %>%
+  violin_mean_plot() + geom_violin(fill = "transparent")
+```
+
+```{r fig.width=9,fig.height=4.5}
+features <- c("IGHG4", "IGHG1", "IGHG2", "IGHA2", "IGHA1","IGHG3")
+# dev.new(width=9, height=4.5, noRStudioGD = TRUE) 
+B <- DEGs_df %>%
+  filter(., !(grepl("0|^3|9|^10$|^11$|^12$|^4|^2", .$layers))) %>%
+  filter(feature %in% features) %>%
+  violin_mean_plot() + coord_flip(clip = F) +
+  theme_minimal() + NoLegend() 
+
+sig_filt <- filter(sig_df, !(grepl("0|^3|9|^10$|^11$|^12$|^4|^2", sig_df$layers)))
+
+(B <- B + ggpubr::stat_pvalue_manual(
+    sig_filt,
+    step.group.by = "step",
+    step.increase = 0.09,
+    label = "p.adj.signif",
+    y.position = sig_filt$y.position,   # use computed y
+    xmin = "group1",
+    xmax = "group2",
+    tip.length = 0.01,
+    coord.flip = TRUE
+    ))
 ```
 
 ```{r genes-on-tissue_all_ID, fig.width=8,fig.height=8}
@@ -305,17 +391,131 @@ plots_rep <- geneid %>%
 # dev.new(width=3.3, height=2, noRStudioGD = TRUE)
 plots_rep[[1]]
 
-B <- plot_grid(plots_rep[[8]], plots_rep[[5]], ncol = 1)
+A2 <- plot_grid(plots_rep[[8]], plots_rep[[5]], ncol = 1)
 # ggsave("./Figures/04/on_tissue.png", B, width = 4, height = 3.3, bg = "white", dpi = 500) #, dpi = 300
 ```
 
-
-```{r FIGURE4, fig.width=6.7,fig.height=3}
+```{r Figure4A, fig.width=6.7,fig.height=3}
 #########################
 # COMBINE PANEL A AND B #
 #########################
 # dev.new(width=6.7, height=3, noRStudioGD = TRUE) 
-(FIGURE4 <- plot_grid(A, B, rel_widths = c(1, 1))) # labels = c("a", "b")
+(A <- plot_grid(A1, A2, rel_widths = c(1, 1))) # labels = c("a", "b")
+# ggsave("./Figures/04/Figure_4.png", p, width = 6.7, height = 3.3, bg = "white") #, dpi = 300
+```
+
+```{r fig.width=8,fig.height=9}
+# checks if the mean difference in expression is reflected in each sample
+# or biased by a single sample, by plotting on sample level
+
+violin_sample_plot <- function(DEGs_df){
+  m <- max(na.omit(DEGs_df[["val"]]))/1 # try e.g 2
+  DEGs_df %>%
+    ggplot(aes(x=orig.ident, y=val, col=groups)) +
+    geom_violin() + # {if(length(feature == 1)) ggtitle(feature)} +
+    #geom_boxplot(fill = "transparent", notch = T, outlier.size = .5, outlier.colour = "red") +
+    #geom_jitter(width = 0.3, height = 0.2, alpha = 0.2, size=.01) +
+    stat_summary(aes(y = val), fun=median, geom="crossbar", linewidth=.2, color="black") +
+    scale_color_manual(values = col) + ylab("Expression") +
+    my_theme + NoLegend() + #xlim(c(0, m)) +
+    theme(text = element_text(size = 9),
+          plot.margin = unit(c(-0,-2,1,-6),units = "pt"),
+          plot.title = element_text(size = 8, hjust = 0.5, margin = margin(b = 0)),
+          axis.line = element_blank(),
+          axis.title.x = element_blank(),
+          axis.text.x = element_text(angle = 30, hjust=1)
+          #panel.border = element_rect(colour = "gray")
+          ) +
+    #       axis.title.y = element_blank(),
+    #       ) +
+    #facet_wrap(~.data[[facet]], ncol = ncol, strip.position = c("right", "bottom", "left", "top"))
+    facet_grid(rows = vars(layers), cols = vars(groups), scale ="free", space ="free" ) #, strip.position = c("right", "bottom", "left", "top"))
+}
+feature <- c("IGHG4", "IGHG1", "IGHA2", "IGHA1","IGHG3")
+feature_ <- c("IGHG1")
+col <- c("L1"="#56B4E9","L2"="#009E73","L3"="#CC79A7", "L4"="#FC8D62")
+facet <- "layers"
+group.by <- "orig.ident"
+ncol <- 1
+# dev.new(width=15, height=9, noRStudioGD = TRUE) 
+# plots individual groups (L1-L4) at sample level
+plots <- map(set_names(feature), ~ {
+  P <- DEGs_df %>%
+    filter(feature %in% .x) %>%
+    filter(!grepl("^11$|^12$|^10$|9|^2|^0|^3|4", layers)) %>%
+    #filter(grepl(.x, groups)) %>%
+    violin_sample_plot() + geom_violin(fill = "transparent") +
+    ggtitle(paste0(.x))
+})
+plots$IGHG1
+P <- plot_grid(plotlist = plots, ncol = 1)
+# ggsave("./Figures/04/sample_level_comp_.png", P, width = 6.7, height = 20) #, dpi = 300
+```
+
+```{r fig.width=8,fig.height=9}
+# dev.new(width=8, height=9, noRStudioGD = TRUE) 
+# all groups (L1-L4) across all layers
+p <- DEGs_df %>%
+  # filter(!(feature %in% c("CD81")))  %>%
+  violin_mean_plot()
+# ggsave("./Figures/04/Fig_viol.png", A, width = 6.7, height = 3) #, dpi = 300
+
+```
+
+```{r fig.width=8,fig.height=7}
+# dev.new(width=8, height=7, noRStudioGD = TRUE) 
+# L1 and L2 only across all layers
+p <- DEGs_df %>% 
+  filter((grepl("L1|L2", .$groups))) %>% 
+  violin_mean_plot()
+```
+
+```{r plot-selected-layers, fig.width=4,fig.height=4, eval=FALSE}
+feature <- c("IGHA1","IGHG1", "CD81", "IGKC", "JCHAIN")
+feature <- c("IGHA1","IGHG1", "IGHG3", "IGKC", "IGHG4")
+
+DEGs_df <- DEGs_df %>%
+  filter((grepl("L1|L2", .$groups))) %>% 
+  filter((grepl("Basal|^1$", .$layers))) %>%
+  filter(feature %in% feature) 
+
+# groups on x-axis, genes on x axis
+# used for figure 4
+violin_mean_plot <- function(DEGs_df){
+  m <- max(na.omit(DEGs_df[["val"]]))/1 # try e.g 2
+  DEGs_df %>%
+    ggplot(aes(x=.data[[group.by]], y=.data[["val"]], col=.data[[group.by]])) +
+    geom_violin() + # {if(length(feature == 1)) ggtitle(feature)} +
+    stat_summary(aes(y = val), fun=median, geom="crossbar", linewidth=.3, color="black") +
+    #geom_boxplot(fill = "transparent", notch = T, outlier.size = .5, outlier.colour = "red") +
+    geom_jitter(width = 0.3, height = 0.2, alpha = 0.2, size=.01) +
+    scale_color_manual(values = col) + ylab("Expression") +
+    my_theme + NoLegend() + #xlim(c(0, m)) +
+    theme(text = element_text(size = 12),
+          axis.line = element_blank(),
+          panel.border = element_rect(colour = "gray") ) +
+    #       axis.text.x = element_text(angle = 30, hjust=1),
+    #       plot.title = element_text(hjust = 0.5),
+    #       axis.title.y = element_blank(),
+    #       axis.title.x = element_blank()) +
+    #facet_wrap(~.data[[facet]], ncol = ncol, strip.position = c("right", "bottom", "left", "top"))
+    facet_grid(rows = vars(layers), cols = vars(feature)) #, strip.position = c("right", "bottom", "left", "top"))
+}
+
+# dev.new(width=3.3, height=3, noRStudioGD = TRUE) 
+A <- violin_mean_plot(DEGs_df)
+# ggsave("./Figures/04/Fig_L1_L2_viol.png", A, width = 4, height = 4, dpi = 500) #, dpi = 300
+A
+```
+
+
+
+```{r FIGURE4, fig.width=6.7,fig.height=7}
+#########################
+# COMBINE PANEL A AND B #
+#########################
+# dev.new(width=6.7, height=7, noRStudioGD = TRUE) 
+(FIGURE4 <- plot_grid(A, B, ncol = 1, rel_heights = c(3, 4))) # labels = c("a", "b")
 # ggsave("./Figures/04/Figure_4.png", p, width = 6.7, height = 3.3, bg = "white") #, dpi = 300
 ```
 
