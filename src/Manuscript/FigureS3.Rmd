@@ -1,5 +1,5 @@
 ---
-title: "Supplemental Figure 2"
+title: "Supplemental Figure 3"
 date: "`r format(Sys.time(), '%d %B, %Y')`"
 format:
   html:

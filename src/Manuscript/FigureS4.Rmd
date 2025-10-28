@@ -1,5 +1,5 @@
 ---
-title: "Figure S3 & S4"
+title: "Figure S4"
 date: "`r format(Sys.time(), '%d %B, %Y')`"
 format:
   html:

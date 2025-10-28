@@ -1,6 +1,7 @@
 ---
 title: "Supplemental Figure 1"
-date: "`r format(Sys.time(), '%d %B, %Y')`"
+date: today
+date-format: "D MMM YYYY"
 format:
   html:
     embed-resources: true
@@ -10,6 +11,7 @@ params:
 editor_options: 
   chunk_output_type: console
 ---
+## 16S rRNA gene-based proportions of vaginal taxa
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(
@@ -27,7 +29,7 @@ knitr::opts_chunk$set(
     ifelse(fs::file_exists(new_filename), new_filename, filename)
   }
   )
-# setwd("~/work/Brolidens_work/Projects/Spatial_Microbiota/src/Manuscript")
+#  setwd("~/work/Brolidens_work/Projects/Spatial_Microbiota/src/Manuscript")
 ```
 
 ```{r background_job, eval=FALSE, include=FALSE}
@@ -38,13 +40,13 @@ source("../../bin/render_with_jobs.R")
 # fs::file_move(path = file, new_path = paste0(lab_dir, file))
 
 # currently using quarto for github and kniter for html due to source code option 
-render_git_with_job(fig_path = "./Figures/S1/")
+render_git_with_job(fig_path = "./Figures/S3/")
 system2(command = "sed", stdout = TRUE,
         args = c("-i", "''","-e", 's/src=\\"\\./src=\\"\\.\\./g',
-                 paste0("./md_files/", basename("./Figure_S1.md"))))
+                 paste0("./md_files/", basename("./Figure_S3.md"))))
 
 # kniter
-knit_html_with_job(out_dir = "../lab_book/Figures_S1", fig_path = "./Figures/S1/")
+knit_html_with_job(out_dir = "../lab_book/figure_S3", fig_path = "./Figures/S3/")
 ```
 
 ### Load data and libraries
@@ -53,64 +55,274 @@ knit_html_with_job(out_dir = "../lab_book/Figures_S1", fig_path = "./Figures/S1/
 # LOAD LIBRARIES #
 ##################
 library(tidyverse)
-library(Seurat)
-library(SeuratObject)
-library(tidyseurat)
+#library(Seurat)
+#library(SeuratObject)
+#library(tidyseurat)
 library(cowplot)
-library(ggrepel)
-library(png)
-library(grid)
+library(readxl)
+library(vegan)
+library(ggforce)
 
-source("../../bin/spatial_visualization.R")
-source("../../bin/plotting_functions.R")
+#source("../../bin/spatial_visualization.R")
+#source("../../bin/plotting_functions.R")
 
 #########
 # PATHS #
 #########
-input_dir <- "../../results/03_clustering_st_data/"
-result_dir <- "../../results/09_figures/"
-if( isFALSE(dir.exists(result_dir)) ) { dir.create(result_dir,recursive = TRUE) }
-epi_clus <- "^5$|^6$|^7|^9" # non-filt
+input_dir <- "../../results/08_spatial_dist/SM/"
+input_dir <- "../../results/04_deconvolution_st_data/"
 
 #############
 # LOAD DATA #
 #############
-DATA <- readRDS(paste0(input_dir,"seuratObj_clustered.RDS"))
+meta <- read_csv("../../data/Clinical_data/Spatial_clinical_data.csv")
+# DATA <- readRDS(paste0("/Users/vilkal/work/Brolidens_work/Projects/Spatial_Microbiota/results/07_sp_microbes/","seuratObj_microbes_old.RDS"))
 
-#################
-# COLOUR PALLET #
-#################
+dataset_names <- c("ASV_Luminal_raw_counts", # Tissue, Boston run 1 (108 samples)
+                   "ASV_Tissue_raw_counts")  # Tissue, Boston run 2+1 (93 sample)
+
+datasets <- map(dataset_names, 
+  ~read_excel(paste0("../../data/", "Suppl.Tbl.01 Abundance, diversity, BCs and ASV counts.xlsx"), sheet = .x)) %>% 
+  set_names(., dataset_names)
+
 sample_id <- c("P020", "P045", "P050", "P057",
-               "P008", "P031", "P080", "P044", "P026", "P105", 
+               "P008", "P031", "P044", "P080", "P026", "P105", 
                "P001", "P004", "P014", "P018", "P087", "P118",
-               "P021", "P024", "P067", "P081", "P117" )
-friendly_cols <- c("#4E79A7", "#F28E2B", "#E15759", "#76B7B2", "#59A14F", "#EDC948", "#9C755F", 
-                   "#B07AA1", "#FF9DA7", "#E78AC3", "#7FC97F", "#BEAED4", "#BAB0AC", "#FDC086",
-                   "#FFFF99", "#386CB0", "#F0027F", "#BF5B17", "#666666", "#66C2A5", "#FC8D62", "#8DA0CB")
+               "P021", "P024", "P067", "P081", "P117" ) %>% set_names()
 ```
 
-```{r QC-plots, fig.width = 7, fig.height = 3.3}
-################################
-# VIOLIN PLOT AFTER FILTERING #
-################################
-DAT <- DATA %>% mutate(orig.ident = factor(.$orig.ident, levels = sample_id))
+```{r colour-pallet}
+#####################################
+# IDENTIFY MOST HIGLY ABUNDANT TAXA #
+#####################################
+# get top taxa by ordering max/median/mean percent tax in individual samples
+# you can test what order you prefer by changing between max, median, and mean
+d <- datasets[["ASV_Luminal_raw_counts"]] %>% 
+  mutate(across(starts_with("P"), ~.x/sum(.x))) %>%
+  rowwise() %>% mutate(., p = max(c_across(2:ncol(.)))) %>%
+  select(1, p) %>% arrange(desc(p))
 
-feature <-  c("nCount_RNA", "nFeature_RNA")
-A <-  map(feature, ~violin.fun(DAT, feature=.x, 
-                               fill="orig.ident", 
-                               col_pal=friendly_cols, 
-                               n=1, txt_size=12, dot_size=.4))
+# gives list of taxa by decreasing percent
+n <- d$Genus_taxa_luminal[1:24]
 
+##################
+# COLOUR PALETTE #
+##################
+n <- c('L. crispatus','L. acidophilus','L. crispatus/acidophilus','L. iners','L. other','L. jensenii','L. johnsonii',
+       'L. gasseri/johnsonii/taiwanensis','L. reuteri', 'L. reuteri/oris/frumenti/antri',
+       'Gardnerella','Prevotella','Atopobium','Sneathia','Megasphaera','Streptococcus',
+       'Anaerococcus','Dialister','Mycoplasma','Bifidobacterium', 'Klebsiella', 'Citrobacter/Klebsiella',
+       'Escherichia','Escherichia/Shigella')
+
+cols <- c( "#A8EDFC","#A8EDFC","#A8EDFC","#87c7c0","#a9e7e4","#c2ebe2","#7fe2e9","#7fe2e9","#83dafb","#83dafb",# 
+           "#be6a7d","#f1a6b1","#E3E6AD","#F8D0A4","#c4ce96","#9aacce","#e1caff","#abc5bf",
+           "#ffffd4","#c0a2c1","#c8ffd5","#c8ffd5","#afb7ee","#ffc8d9","#ffc8d9","#e7b993","#c8ffd5",
+           "#c4cea9","#a1b37d","#a6cca7","#d1b9ee","#88c29c",
+           "#fdcc8a","#91c6f7","#f5f8bd","#8db1c5","#fab0aa","#7cb6b6","#96f3eb","#6ececc")
+
+cols <- set_names(cols[1:length(n)], n)
+cols <- c(cols, 'other'="gray90")
 ```
 
-```{r Figure-S1, fig.width=9, fig.height=9, dpi=1000}
+```{r functions}
+# agglomerate all Lactobacillus species except for the ones specified by the vector (L) to "L. other"
+agglom_L.fun <- function(df, taxa="taxa", format_W=T, counts="value"){
+  # NB! specify weather the df is in long (format_W=FALSE) or wide format (format_W=TRUE)
+  L <- c("crispatus", "iners","jensenii", "johnsonii", "reuteri", "acidophilus")
+  L <- df[[taxa]][!(grepl( paste0(L, collapse = "|"), df[[taxa]]))]
+  L <- gsub("(^Lactobacillus)(.+)", "L.\\2", L)
+  L <- unique(L[grep("L\\.", L)])
+  pattern <- paste0(L, collapse = "|")
+  
+  df <- df %>%
+    mutate(!!(taxa) := gsub(pattern, "L. other", !!sym(taxa))) %>%
+    {if(format_W) summarise(., across(where(is.numeric), sum), .by = taxa) else .} %>%
+    {if(isFALSE(format_W)) summarise(., across(where(is.numeric), sum),  .by =-all_of(counts)) else .}
+}
+
+# order samples by percentage of specified taxa based on assigned microbiome group
+# NB! I found that I got a cleaner looking graph by using gardnerella also for L4 (typ = identity) 
+factor.fun <- function(df, type="stack"){
+  l <- c("L1"="L. crispatus/acidophilus", "L2"="L. jensenii", "L3"="L. iners", "L4"="Gardnerella")
+  if(type=="identity"){l <- c("L1"="L. crispatus/acidophilus", "L2"="L. iners", 
+                              "L3"="Gardnerella", "L4"="Gardnerella")}
+  imap(l, ~filter(df, gr==.y & taxa==.x) %>% 
+               arrange(., desc(Percent)) %>% pull(., "ID") ) %>%
+        unlist()}
+```
+
+
+```{r Taxa-bar-plot, fig.width=6, fig.height=6}
+############
+# FUNCTION #
+############
+# order individually by luminal groups
+taxa_plot.fun <- function(type, area=F, txt_size=12){
+  if(type=="identity"|type=="stack"){col <- "Percent"}else{col <- "value"}
+  
+  # create individual dfs for each group, in order to order taxa for each separately:
+  d <- df %>% 
+    {if(type=="identity") mutate(., ID = factor(ID, levels = factor.fun(., type="identity"))) else .} %>%
+    split(~gr) %>% 
+    map(., ~ .x %>%
+          arrange(., desc(Percent)) %>%
+          mutate(., taxa = factor(taxa, levels=unique(.$taxa))) ) 
+  # check resulting taxa levels
+  labs <- d %>% map(., ~levels(.x$taxa)) 
+
+  # shows italics for bacterial names
+  library(ggtext)
+  labs <- case_when(
+    labs$L1 %in% n ~ paste0("<i>", labs$L1, "</i>"),
+    TRUE ~ labs$L1
+  )
+  
+  ggplot() + 
+    {if(area)list(
+      geom_area(data = d$L1, aes(x=ID, y=.data[[col]], group=taxa, fill=taxa), position = type),
+      geom_area(data = d$L2, aes(x=ID, y=.data[[col]], group=taxa, fill=taxa), position = type),
+      geom_area(data = d$L3, aes(x=ID, y=.data[[col]], group=taxa, fill=taxa), position = type),
+      geom_area(data = d$L4, aes(x=ID, y=.data[[col]], group=taxa, fill=taxa), position = type))}+
+    {if(isFALSE(area))list(
+      geom_col(data = d$L1, aes(x=ID, y=.data[[col]], group=taxa, fill=taxa), position = type),
+      geom_col(data = d$L2, aes(x=ID, y=.data[[col]], group=taxa, fill=taxa), position = type),
+      geom_col(data = d$L3, aes(x=ID, y=.data[[col]], group=taxa, fill=taxa), position = type),
+      geom_col(data = d$L4, aes(x=ID, y=.data[[col]], group=taxa, fill=taxa), position = type))} +
+    
+    #{if(type=="identity") 
+    #  geom_line(data = df, aes(x=ID, y=.data[[col]], group=taxa), color="white", size=.2)} + 
+    scale_color_manual(values = cols, labels = labs, 
+    aesthetics = c("color", "fill") ) + theme_classic(base_size = txt_size) +
+    scale_y_continuous(labels = scales::percent) + coord_cartesian(expand = F) +
+    theme(axis.text.x = element_text(angle = 90, vjust = .5), 
+          legend.text = element_markdown(),
+          #axis.text = element_text(size = 10),
+          #legend.text = 
+          axis.title = element_blank(), legend.title = element_blank()) #legend.position=c(.9,.74),
+}
+
+######################
+# TAXA AREA/BAR PLOT #
+######################
+# get taxa df
+df <- datasets$ASV_Luminal_raw_counts %>% 
+  pivot_longer(cols = -Genus_taxa_luminal, names_to = "ID") %>%
+  filter(ID %in% sample_id) %>%
+  left_join(., select(meta, ID, gr="Luminal_gr_v3"), by="ID") %>%
+  # creates L. other category:
+  agglom_L.fun(., "Genus_taxa_luminal", format_W=F) %>%
+  # Non-abundant taxa to "other":
+  mutate(taxa = ifelse(.$Genus_taxa_luminal %in% n, .$Genus_taxa_luminal, "other")) %>%
+  mutate(taxa = factor(taxa, levels = c(n,"other"))) %>%
+  mutate(Percent = value/sum(value), .by = "ID") %>%
+  # Others.fun(., "taxa", percent = 0.001) %>%
+  mutate(ID = factor(ID, levels = factor.fun(.))) ## order samples by percentage of taxa
+
+# check if percentages add up to one
+group_by(df, ID) %>% summarize(total_percent = sum(Percent)) 
+
+d <- summarize(df, total_percent = sum(Percent), .by = c("taxa", "ID")) 
+
+# get plot
+# dev.new(width=6, height=6, noRStudioGD = TRUE) 
+(A <- taxa_plot.fun(type = "fill", txt_size=10, area=T))
+
+(A <- taxa_plot.fun(type = "fill", txt_size=10))
+```
+
+```{r NMDS, fig.width=6, fig.height=6}
+#####################################
+# NORMALIZE AND COMBINE ALL DATASETS #
+#####################################
+# normalize function:
+# NB! Im not sure if this is the best way to normalize the data
+normalize.fun <- function(df){round( t(log2( t(df) / colSums(df) * 1000 + 1 )),4)}
+
+samples <- sample_id
+tax <- c(n, "other")
+fix <- c("L. reuteri/oris/frumenti/antri", "L. crispatus/acidophilus", "L. gasseri/johnsonii/taiwanensis",
+         "Citrobacter/Klebsiella", "Escherichia/Shigella", "Delftia/Roseateles", "Clostridium_IV","Clostridium_sensu_stricto", "Clostridium_XlVa")
+new_n <- c("L. reuteri", "L. acidophilus", "L. johnsonii","Klebsiella", "Escherichia", "Delftia", "Clostridium", "Clostridium", "Clostridium") %>% set_names(., fix)
+
+# uses the the 
+datasets_ <- datasets %>%
+  set_names(., c("L","T")) %>%
+  map(., ~rename(., taxa = 1)) %>%
+  # agglomerate all Lactobacillus species except for the ones specified by L to L. other
+  map(., ~agglom_L.fun(.x, format_W = T) ) %>%
+  # renames names with "/" in them to single species
+  #map(., ~mutate(.x, taxa = ifelse( .$taxa %in% fix, new_n[.$taxa], .$taxa)) )  %>%
+  # agglomerates any possible duplicates
+  #map(., ~summarise(.x, across(where(is.numeric), sum), .by = "taxa") ) %>%
+  
+  map(., ~select(.x, taxa, any_of(samples)) ) %>%
+  #map(., ~filter(.x, .$taxa %in% tax) ) %>%
+  map(., ~column_to_rownames(.x, var = colnames(.x)[1]) ) %>%
+  #imap(., ~.x %>% rename_with(function(x) c(paste(x, .y, sep = "_")) )) 
+  map(., ~normalize.fun(.x) ) %>%
+  map(., ~t(.x) ) %>%
+  map(., ~as_tibble(.x, rownames="ID"))
+
+##############
+# META DATA #
+##############
+m <- meta %>%
+  select(ID, gr_L="Luminal_gr_v3", gr_T="Tissue_gr_v3") %>%
+  filter(ID %in% samples)
+
+#############
+# NMDS PLOT #
+############# 
+get_NMDS.fun <- function(df, gr="L"){
+  # NMDS from https://github.com/giacomellolab/SpatialMetaTranscriptomics/blob/main/Compare_SmT_profiles.R
+  example_NMDS=metaMDS(df, # Our normalized counts samples (row) by species (col) matrix
+                     k=2, trymax = 100, distance = "bray") # The number of reduced dimensions -> ,, autotransform = FALSE,distance ="euclidean"
+  stressplot(example_NMDS)
+  plot (example_NMDS)
+  
+  m <- m %>% arrange(paste0("gr_", gr))
+  gr <- m[[paste0("gr_", gr)]]
+  n <- set_names(gr, m$ID)
+  
+  #extract NMDS scores (x and y coordinates)
+  data.scores = as.data.frame(example_NMDS$points)
+  data.scores$gr =n[str_extract(row.names(data.scores), "P\\d\\d\\d")]
+  data.scores$ID=row.names(data.scores)
+  
+  taxa.score = as.data.frame(example_NMDS$species)
+  
+  return(list("sample.score"= data.scores, "taxa.score"=taxa.score))
+}
+
+# single df
+nmds_ls <- datasets_ %>% imap(., ~.x %>% column_to_rownames(., var = "ID") %>% get_NMDS.fun(., gr=.y))
+
+
+#### Plot NMDS Single dataset at a time ####
+B <- map(nmds_ls, ~ggplot(.x[[1]], 
+                                 aes(x = MDS1, y = MDS2)) + 
+  # geom_point(size = 4, aes( shape = Type, colour = Sample))+ 
+    geom_point(size = 1, aes(fill = .data[["gr"]], colour = .data[["gr"]]), show.legend = F) +
+    scale_fill_manual(values = c( "#56B4E9","#009E73","#CC79A7","#FC8D62", "gray51"),
+                      aesthetics = c("colour","fill") ) +
+    geom_mark_ellipse(aes(fill = .data[["gr"]], colour = .data[["gr"]]), expand = 0, show.legend = F) +
+    geom_text(aes(label=ID), size=4, vjust = -.4, nudge_x = 0.02, color="gray51") +
+    coord_equal(clip = 'off' ) +
+    theme_classic(base_size = 10) +
+    theme(legend.title=element_blank(),
+          plot.margin = unit(c(0,0,-2,0), "lines"))
+  )
+# dev.new(width=6, height=6, noRStudioGD = TRUE) 
+B$L
+```
+
+```{r FigureS1, fig.width=9, fig.height=5, dpi=1000}
 #############################
 # COMBINE ALL FIGURE PANELS #
 #############################
-# dev.new(width=8, height=9, noRStudioGD = TRUE)
-Figure_S1 <- plot_grid(plotlist=A, nrow = 2, labels = c('A', 'B'))
-# ggsave("./Figures/S1/FigureS1.pdf", Figure_S1, width = 8, height = 9, bg = "white", dpi = 1000)
+# dev.new(width=9, height=5, noRStudioGD = TRUE)
+FigureS1 <- plot_grid( A, B$L, ncol=2, rel_widths = c(1,.9)) 
+# ggsave("./Figures/S1/Figure_S1.pdf", FigureS1, width = 9, height = 5, bg = "white", dpi = 1000)
 
-Figure_S1
+FigureS1
 ```
-
