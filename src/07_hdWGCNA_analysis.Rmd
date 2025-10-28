@@ -10,7 +10,6 @@ params:
 editor_options: 
   chunk_output_type: console
 ---
-## Heatmap of significant genes per cluster
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(
