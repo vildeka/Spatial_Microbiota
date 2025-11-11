@@ -56,6 +56,7 @@ knitr::opts_chunk$set(
 library(tidyverse)
 library(Seurat)
 library(tidyseurat)
+library(grid)
 library(cowplot)
 library(harmony)
 source("../bin/plotting_functions.R")
@@ -98,9 +99,15 @@ DATA_nested <- DATA %>%
 hvgs_heat <- DATA_nested %>%
   .$data %>%
   map(., ~ .x@assays$RNA@var.features) %>%
+  
+  # Flatten and collect all HVGs across samples into one vector 'hvgs_all'
   ( function(x){unique(unlist(x)) ->> hvgs_all; return(x)} ) %>%
-  # intersect across all samples:
+  
+  # Find intersection of HVGs across samples 
   ( function(x){Reduce(intersect, x) ->> hvgs; return(x)} ) %>% 
+  
+  # Create a df where each column represents a sample, and each row a gene.
+  # The value is TRUE/FALSE depending on whether that gene is an HVG in that sample.
   imap_dfc(., ~hvgs_all %in% .x, .id=.y) %>%
   mutate(rownames = hvgs_all) %>%
   column_to_rownames(var = "rownames")
@@ -111,12 +118,38 @@ hig_var <- rownames(hvgs_heat)[rowSums(hvgs_heat)>2]
 # remove all VDJ-genes from list of HVG
 remove <- str_subset(hig_var, "^IGH|^IGK|^IGL|^TRA|^TRB|^TRD|^TRG")
 hig_var <- setdiff(hig_var, remove)
+length(hig_var)
 ```
 
 ### Heatmap of HVG in all samples
 
-```{r 02a_HVG_heatmap, fig.width=10}
-pheatmap::pheatmap(t(hvgs_heat * 1), cluster_rows = F, color = c("grey90", "grey20"))
+```{r 02a_HVG_heatmap, fig.width=10, fig.cap="Showing every 100th column label of the heatmap"}
+ph <- pheatmap::pheatmap(
+  t(hvgs_heat * 1),
+  fontsize_col = 5,
+  breaks = c(-0.5, 0.5, 1.5),  
+  legend_breaks = c(0, 1),                   # what values to show in legend
+  legend_labels = c("No", "Yes"),            # how to label them
+  cluster_rows = FALSE, silent = T,
+  color = c("grey90", "grey20"),
+)
+
+###############################
+# SHOW N'TH COLUMN LABELS #
+###############################
+# Extract column order
+col_order <- ph$tree_col$order
+labels_ordered <- ph$tree_col$labels[col_order]
+
+# Thin labels: only 1 in 100
+labels_thinned <- ifelse(seq_along(labels_ordered) %% 100 == 0, ph$tree_col$labels, "")  # show every 100th label
+
+# Replace column labels in the gtable (this actually affects the plot)
+ph[["gtable"]][["grobs"]][[3]][["label"]] <- labels_thinned
+
+# Draw the modified heatmap
+#grid.newpage()
+grid.draw(ph$gtable)
 ```
 
 ### Integration
