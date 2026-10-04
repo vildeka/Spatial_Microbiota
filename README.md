@@ -15,7 +15,7 @@ Vilde Kaldhusdal, Mathias Franzen Boger, Adam D. Burgener, Julie Lajoie, Kenneth
 
 ## General info
 
-doi:[...](https://doi.org/)
+doi:[10.1371/journal.ppat.1013677](https://doi.org/10.1371/journal.ppat.1013677)
 
 This repository contains the code related to the article "The cervicovaginal microbiome impacts spatially restricted host transcriptional signatures throughout the human ectocervical epithelium and submucosa"
 
